@@ -2253,23 +2253,182 @@ async function sbGet(table, params='') {
   try { const r = await fetch(SB_URL+'/rest/v1/'+table+params,{headers:sbH()}); return await r.json(); }
   catch(e) { return null; }
 }
-// Como sbGet, pero pagina automáticamente para no perderse filas si la tabla supera el
-// tope por defecto que aplica Supabase a una consulta (comúnmente 1000).
+// Lectura paginada ESTRICTA: si cualquier página falla (timeout, 5xx, sin conexión) tira
+// error en vez de devolver una lista vacía o a medias. Ordena por id para que la paginación
+// sea estable (sin orden, Postgres puede repetir o saltear filas entre páginas).
 async function sbGetAll(table, params='') {
   let all = [];
   let offset = 0;
   const pageSize = 1000;
   const sep = params.includes('?') ? '&' : '?';
   while (true) {
-    const page = await sbGet(table, params + sep + 'limit=' + pageSize + '&offset=' + offset);
-    if (!Array.isArray(page) || page.length === 0) break;
+    const page = await sbGetStrict(table, params + sep + 'order=id.asc&limit=' + pageSize + '&offset=' + offset);
     all = all.concat(page);
     if (page.length < pageSize) break;
     offset += pageSize;
   }
   return all;
 }
-async function sbUpsert(table, body) {
+
+// ── Protección de datos ──────────────────────────────────────────────────────
+// dataLoaded: true solo cuando la carga inicial completa salió bien. Mientras sea false,
+// NINGÚN guardado sobre js_dist_anual sale de este navegador: así una carga fallida
+// (pantalla "vacía") nunca puede pisar los datos reales del servidor.
+let dataLoaded = false;
+
+// Comparación estable de JSON (independiente del orden de las claves de los objetos)
+function jCanon(x) {
+  if (Array.isArray(x)) return '[' + x.map(jCanon).join(',') + ']';
+  if (x && typeof x === 'object') return '{' + Object.keys(x).sort().map(k => JSON.stringify(k) + ':' + jCanon(x[k])).join(',') + '}';
+  return JSON.stringify(x === undefined ? null : x);
+}
+function jEq(a, b) { return jCanon(a) === jCanon(b); }
+function isPlainObj(x) { return x && typeof x === 'object' && !Array.isArray(x); }
+
+// Fusión de 3 vías: base = lo que este navegador cargó del servidor, mine = lo que el
+// supervisor tiene ahora en pantalla, theirs = lo que hay HOY en el servidor (puede incluir
+// cambios de otros supervisores guardados mientras tanto). Aplica SOLO lo que cambió este
+// supervisor encima de la versión actual, sin borrar lo que agregaron los demás.
+// Si base es undefined (no se conoce qué había), nunca se borra nada: solo se suma.
+function merge3(base, mine, theirs) {
+  if (jEq(mine, theirs)) return mine;
+  if (base !== undefined && jEq(base, theirs)) return mine;   // nadie más tocó → va lo mío
+  if (base !== undefined && jEq(base, mine)) return theirs;   // yo no toqué → va lo del server
+  if (Array.isArray(mine) && Array.isArray(theirs)) {
+    const b = Array.isArray(base) ? base : undefined;
+    const sameLen = mine.length === theirs.length && (b ? b.length === mine.length : true);
+    // Estructuras posicionales (12 meses, grillas por día, etc.): se fusiona casillero por casillero
+    if (sameLen && (b || mine.every(Array.isArray))) {
+      return mine.map((m, i) => merge3(b ? b[i] : undefined, m, theirs[i]));
+    }
+    // Listas de registros: lo que yo agregué se suma, lo que yo borré se quita, el resto queda como está en el server
+    const count = arr => { const m = new Map(); arr.forEach(x => { const k = jCanon(x); m.set(k, (m.get(k) || 0) + 1); }); return m; };
+    const cb = count(b || []), cm = count(mine);
+    const removed = new Map(), added = [];
+    if (b) cb.forEach((n, k) => { const d = n - (cm.get(k) || 0); if (d > 0) removed.set(k, d); });
+    const cbLeft = new Map(cb);
+    mine.forEach(x => { const k = jCanon(x); const left = cbLeft.get(k) || 0; if (left > 0) cbLeft.set(k, left - 1); else added.push(x); });
+    const out = [];
+    const ct = new Map();
+    theirs.forEach(x => {
+      const k = jCanon(x);
+      const r = removed.get(k) || 0;
+      if (r > 0) { removed.set(k, r - 1); return; }
+      out.push(x); ct.set(k, (ct.get(k) || 0) + 1);
+    });
+    added.forEach(x => {
+      const k = jCanon(x);
+      const already = ct.get(k) || 0;
+      if (already > 0) { ct.set(k, already - 1); return; } // el otro agregó exactamente lo mismo
+      out.push(x);
+    });
+    return out;
+  }
+  if (isPlainObj(mine) && isPlainObj(theirs)) {
+    const b = isPlainObj(base) ? base : undefined;
+    const out = {};
+    const keys = new Set([...Object.keys(theirs), ...Object.keys(mine)]);
+    keys.forEach(k => {
+      const inB = !!b && Object.prototype.hasOwnProperty.call(b, k);
+      const inM = Object.prototype.hasOwnProperty.call(mine, k);
+      const inT = Object.prototype.hasOwnProperty.call(theirs, k);
+      if (!inM) {                                  // yo no lo tengo
+        if (inT && inB && jEq(b[k], theirs[k])) return; // lo borré yo y nadie lo tocó → se borra
+        if (inT) out[k] = theirs[k];                   // lo agregó/editó otro → queda
+        return;
+      }
+      if (!inT) {                                  // el server no lo tiene
+        if (inB && jEq(b[k], mine[k])) return;         // lo borró otro y yo no lo toqué → se borra
+        out[k] = mine[k];
+        return;
+      }
+      out[k] = merge3(inB ? b[k] : undefined, mine[k], theirs[k]);
+    });
+    return out;
+  }
+  return mine; // mismo dato simple editado por los dos: gana el último que guarda
+}
+
+// Escritura con control de concurrencia (compare-and-swap sobre updated_at):
+// lee la versión actual, calcula qué guardar y escribe SOLO si nadie la cambió en el medio.
+// Si alguien escribió entre la lectura y la escritura, vuelve a leer y recalcula.
+async function sbCasWrite(key, compute, tries = 6) {
+  const enc = encodeURIComponent(key);
+  for (let i = 0; i < tries; i++) {
+    const rows = await sbGetStrict('js_dist_anual', '?select=data,updated_at&key=eq.' + enc);
+    const row = rows[0] || null;
+    const newData = compute(row);
+    const nowIso = new Date().toISOString();
+    if (row) {
+      const tsFilter = row.updated_at == null ? 'updated_at=is.null' : 'updated_at=eq.' + encodeURIComponent(row.updated_at);
+      const r = await fetch(SB_URL + '/rest/v1/js_dist_anual?key=eq.' + enc + '&' + tsFilter, {
+        method: 'PATCH', headers: {...sbH(), 'Prefer': 'return=representation'},
+        body: JSON.stringify({data: newData, updated_at: nowIso})
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const out = await r.json();
+      if (Array.isArray(out) && out.length) return {serverRaw: row.data, finalRaw: newData};
+    } else {
+      const r = await fetch(SB_URL + '/rest/v1/js_dist_anual', {
+        method: 'POST', headers: {...sbH(), 'Prefer': 'return=minimal'},
+        body: JSON.stringify({key, data: newData, updated_at: nowIso})
+      });
+      if (r.ok) return {serverRaw: undefined, finalRaw: newData};
+      if (r.status !== 409) throw new Error('HTTP ' + r.status);
+    }
+    await new Promise(res => setTimeout(res, 150 + Math.random() * 350)); // otro guardó justo ahora → reintenta
+  }
+  throw new Error('conflicto persistente');
+}
+
+let sbBlockedToastAt = 0;
+async function sbUpsert(table, body, opts = {}) {
+  const isDist = table === 'js_dist_anual' && body && body.key;
+  const isAudit = isDist && body.key === 'audit_log';
+  // Guardado protegido para TODO lo que vive en js_dist_anual (menos el historial, que tiene su propia cola)
+  if (isDist && !isAudit && !opts.force) {
+    if (!dataLoaded) {
+      if (Date.now() - sbBlockedToastAt > 3000) {
+        sbBlockedToastAt = Date.now();
+        showBackupToast('⛔ No se guardó: los datos no terminaron de cargar. Recargá la página (F5) y volvé a intentar.');
+      }
+      return false;
+    }
+    const key = body.key;
+    const mineRaw = body.data;
+    let mine;
+    try { mine = JSON.parse(mineRaw); } catch(e) { mine = undefined; }
+    try {
+      let merged = false;
+      const res = await sbCasWrite(key, row => {
+        merged = false;
+        if (!row || mine === undefined) return mineRaw;
+        if (row.data === mineRaw) return mineRaw;
+        const baseRaw = serverSnapshot[key];
+        if (baseRaw !== undefined && row.data === baseRaw) return mineRaw; // nadie más tocó
+        let theirs, base;
+        try { theirs = JSON.parse(row.data); } catch(e) { return mineRaw; }
+        try { base = baseRaw === undefined ? undefined : JSON.parse(baseRaw); } catch(e) { base = undefined; }
+        const out = merge3(base, mine, theirs);
+        const outRaw = JSON.stringify(out);
+        merged = outRaw !== mineRaw;
+        return outRaw;
+      });
+      if (key !== 'audit_log') logChange(key, res.serverRaw, res.finalRaw); // registra solo lo que cambió ESTE supervisor
+      serverSnapshot[key] = res.finalRaw;
+      if (merged) {
+        // Otro supervisor había guardado cambios en el medio: se combinaron y se refleja en pantalla
+        try { applyRow(key, JSON.parse(res.finalRaw)); } catch(e) {}
+        setTimeout(() => { rerenderCurrentScreen(); showBackupToast('🔄 Guardado. Se sumaron también los cambios que otro supervisor cargó mientras tanto.'); }, 60);
+      }
+      return true;
+    } catch(e) {
+      console.error('Supabase guardado protegido falló:', key, e);
+      markDirty();
+      setTimeout(() => showBackupToast('⚠️ No se pudo guardar — verificá la conexión y volvé a tocar Guardar'), 60);
+      return false;
+    }
+  }
   try {
     const r = await fetch(SB_URL+'/rest/v1/'+table+'?on_conflict=key', {
       method:'POST', headers:{...sbH(),'Prefer':'resolution=merge-duplicates'}, body:JSON.stringify(body)
@@ -2279,13 +2438,32 @@ async function sbUpsert(table, body) {
       console.error(`Supabase ${table} error ${r.status}:`, err);
       return false;
     }
-    if (table === 'js_dist_anual' && body && body.key && body.key !== 'audit_log') {
+    if (isDist && !isAudit) {
       const oldRaw = serverSnapshot[body.key];
-      logChange(body.key, oldRaw, body.data); // fire-and-forget, no bloquea el guardado principal
+      logChange(body.key, oldRaw, body.data);
       serverSnapshot[body.key] = body.data;
     }
     return true;
   } catch(e) { console.error('Supabase fetch error:', e); return false; }
+}
+
+// Semillas iniciales: SOLO crean la fila si no existe en el servidor (nunca pisan datos
+// existentes). Después trae lo que realmente quedó guardado y lo pone en pantalla.
+async function sbInsertIfMissing(key, obj) {
+  if (!dataLoaded) return false;
+  try {
+    const r = await fetch(SB_URL + '/rest/v1/js_dist_anual?on_conflict=key', {
+      method: 'POST', headers: {...sbH(), 'Prefer': 'resolution=ignore-duplicates,return=minimal'},
+      body: JSON.stringify({key, data: JSON.stringify(obj), updated_at: new Date().toISOString()})
+    });
+    if (!r.ok) return false;
+    const rows = await sbGetStrict('js_dist_anual', '?select=data&key=eq.' + encodeURIComponent(key));
+    if (rows[0]) {
+      serverSnapshot[key] = rows[0].data;
+      applyRow(key, JSON.parse(rows[0].data));
+    }
+    return true;
+  } catch(e) { return false; }
 }
 async function sbDelete(table, params) {
   try { const r = await fetch(SB_URL+'/rest/v1/'+table+params,{method:'DELETE',headers:sbH()}); return r.ok; }
@@ -2397,18 +2575,23 @@ function auditDiff(oldVal, newVal) {
 // supervisores guardando casi al mismo tiempo se pisen la lista entre sí, se trae la
 // versión más reciente del servidor justo antes de agregar y recién ahí se sube.
 const AUDIT_MAX_DAYS = 31; // el historial no guarda más de ~1 mes hacia atrás
-async function appendAuditEntry(entry) {
-  let current = auditLog;
-  const rows = await sbGet('js_dist_anual', '?select=data&key=eq.audit_log');
-  if (Array.isArray(rows) && rows[0]) {
-    try { current = JSON.parse(rows[0].data) || []; } catch(e) {}
-  }
-  current.unshift(entry);
-  const cutoff = Date.now() - AUDIT_MAX_DAYS*24*60*60*1000;
-  current = current.filter(e => { const t = new Date(e.ts).getTime(); return isNaN(t) || t >= cutoff; });
-  if (current.length > 500) current.length = 500;
-  auditLog = current;
-  await sbUpsert('js_dist_anual', {key:'audit_log', data:JSON.stringify(auditLog), updated_at:new Date().toISOString()});
+let auditQueue = Promise.resolve();
+function appendAuditEntry(entry) {
+  auditQueue = auditQueue.then(async () => {
+    const cutoff = Date.now() - AUDIT_MAX_DAYS*24*60*60*1000;
+    try {
+      const res = await sbCasWrite('audit_log', row => {
+        let current = [];
+        if (row) { try { current = JSON.parse(row.data) || []; } catch(e) { current = []; } }
+        current.unshift(entry);
+        current = current.filter(e => { const t = new Date(e.ts).getTime(); return isNaN(t) || t >= cutoff; });
+        if (current.length > 500) current.length = 500;
+        return JSON.stringify(current);
+      });
+      try { auditLog = JSON.parse(res.finalRaw); } catch(e) {}
+    } catch(e) { console.error('No se pudo registrar en el historial:', e); }
+  });
+  return auditQueue;
 }
 async function logChange(key, oldRaw, newRaw) {
   let detail = [];
@@ -4364,8 +4547,9 @@ async function supMasterSave() {
 }
 async function supMasterAutoSeed() {
   try {
+    if (!dataLoaded) return;
     const rows = await sbGet('js_dist_anual','?key=eq.sup_master_list&select=key');
-    if (Array.isArray(rows) && rows.length === 0) await supMasterSave();
+    if (Array.isArray(rows) && rows.length === 0) await sbInsertIfMissing('sup_master_list', SUP_MASTER);
   } catch(e) {}
 }
 function supMasterAddPrompt() {
@@ -4583,9 +4767,13 @@ function licChangeYear() {
 
 function licRemovePeriod(sup, idx) {
   const yd = licGetYearData(licYear);
+  const p = yd.data[sup] && yd.data[sup].periods[idx];
+  if (!p) return;
+  if (!confirm(`¿Eliminar la licencia de ${sup} (${p.desde} → ${p.hasta})?`)) return;
   yd.data[sup].periods.splice(idx, 1);
   markDirty();
   licRender();
+  licSave(); // se guarda al instante
 }
 function licUpdateRestantes(sup, val) {
   const yd = licGetYearData(licYear);
@@ -4622,7 +4810,7 @@ async function licSave() {
   const btn = document.getElementById('lic-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
   const ok = await sbUpsert('js_dist_anual', {key:'licencias_'+licYear, data:JSON.stringify(licGetYearData(licYear)), updated_at:new Date().toISOString()});
-  clearDirty();
+  if (ok) clearDirty();
   if (btn) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
@@ -4671,6 +4859,7 @@ function licAddPeriodFromForm() {
   document.getElementById('lic-add-hasta').value = '';
   document.getElementById('lic-add-dias').value = '';
   licRender();
+  licSave(); // se guarda al instante
 }
 
 // ── Lista de períodos agrupada por mes ──
@@ -4870,9 +5059,8 @@ function licBuildDayMap(yd, year) {
 
 async function licAutoSeed() {
   try {
-    if (!licSavedData[2026]) {
-      licSavedData[2026] = JSON.parse(JSON.stringify(LIC_SEED_2026));
-      await sbUpsert('js_dist_anual', {key:'licencias_2026', data:JSON.stringify(licSavedData[2026]), updated_at:new Date().toISOString()});
+    if (dataLoaded && !licSavedData[2026]) {
+      await sbInsertIfMissing('licencias_2026', LIC_SEED_2026);
     }
   } catch(e) {}
 }
@@ -4933,12 +5121,7 @@ let doffYear = 2026;
 
 function doffGetYearData(year) {
   if (!doffSavedData[year]) {
-    const prevYears = Object.keys(doffSavedData).map(Number).filter(y => y <= year);
-    if (prevYears.length) {
-      doffSavedData[year] = JSON.parse(JSON.stringify(doffSavedData[Math.max(...prevYears)]));
-    } else {
-      doffSavedData[year] = MESES.map(() => []);
-    }
+    doffSavedData[year] = MESES.map(() => []);
   }
   return doffSavedData[year];
 }
@@ -4951,16 +5134,20 @@ function doffChangeYear() {
 
 function doffRemoveRow(mesIdx, idx) {
   const yd = doffGetYearData(doffYear);
+  const r = yd[mesIdx] && yd[mesIdx][idx];
+  if (!r) return;
+  if (!confirm(`¿Eliminar el ${r.tipo || 'Flex'} de ${r.sup || '(sin nombre)'} del ${r.fecha}?`)) return;
   yd[mesIdx].splice(idx, 1);
   markDirty();
   doffRender();
+  doffSave(); // se guarda al instante
 }
 
 async function doffSave() {
   const btn = document.getElementById('doff-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
   const ok = await sbUpsert('js_dist_anual', {key:'dayoff_'+doffYear, data:JSON.stringify(doffGetYearData(doffYear)), updated_at:new Date().toISOString()});
-  clearDirty();
+  if (ok) clearDirty();
   if (btn) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
@@ -5006,6 +5193,7 @@ function doffAddRowFromForm() {
   document.getElementById('doff-add-horario').value = '';
   document.getElementById('doff-add-escritorio').value = '';
   doffRender();
+  doffSave(); // se guarda al instante: antes quedaba solo en pantalla hasta tocar "Guardar"
 }
 
 // ── Lista de registros agrupada por mes ──
@@ -5137,9 +5325,8 @@ function doffBuildDayMap(yd, year) {
 
 async function doffAutoSeed() {
   try {
-    if (!doffSavedData[2026]) {
-      doffSavedData[2026] = JSON.parse(JSON.stringify(DAYOFF_SEED_2026));
-      await sbUpsert('js_dist_anual', {key:'dayoff_2026', data:JSON.stringify(doffSavedData[2026]), updated_at:new Date().toISOString()});
+    if (dataLoaded && !doffSavedData[2026]) {
+      await sbInsertIfMissing('dayoff_2026', DAYOFF_SEED_2026);
     }
   } catch(e) {}
 }
@@ -5184,7 +5371,7 @@ async function salSave() {
   const btn = document.getElementById('sal-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
   const ok = await sbUpsert('js_dist_anual', {key:'salientes_'+salYear, data:JSON.stringify(salGetYearData(salYear)), updated_at:new Date().toISOString()});
-  clearDirty();
+  if (ok) clearDirty();
   if (btn) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
@@ -5495,7 +5682,7 @@ async function capSave() {
   const btn = document.getElementById('cap-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
   const ok = await sbUpsert('js_dist_anual', {key:'capacitaciones_'+capYear, data:JSON.stringify(capGetYearData(capYear)), updated_at:new Date().toISOString()});
-  clearDirty();
+  if (ok) clearDirty();
   if (btn) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
@@ -6085,7 +6272,7 @@ async function boxSaveClick() {
   if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
   const key = boxCurrentMonth();
   const ok = await sbUpsert('js_dist_anual', {key: 'distribucion_box_' + key, data: JSON.stringify(boxGetMonthData(key)), updated_at: new Date().toISOString()});
-  clearDirty();
+  if (ok) clearDirty();
   if (btn) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
@@ -6097,10 +6284,11 @@ async function boxSaveClick() {
 
 async function boxAutoSeed() {
   try {
-    if (Object.keys(boxSavedData).length === 0 && !boxLegacyData) {
+    if (dataLoaded && Object.keys(boxSavedData).length === 0 && !boxLegacyData) {
       const key = boxCurrentMonth();
-      const seeded = boxGetMonthData(key); // cae en BOX_SEED por no haber nada guardado
-      await sbUpsert('js_dist_anual', {key: 'distribucion_box_' + key, data: JSON.stringify(seeded), updated_at: new Date().toISOString()});
+      const seeded = JSON.parse(JSON.stringify(boxGetMonthData(key))); // cae en BOX_SEED por no haber nada guardado
+      delete boxSavedData[key];
+      await sbInsertIfMissing('distribucion_box_' + key, seeded);
     }
   } catch(e) {}
 }
@@ -6208,6 +6396,9 @@ function goTo(screen) {
   document.getElementById('topbar-sub').textContent = info.sub;
   currentScreen = screen;
   closeSidebar();
+  renderScreen(screen);
+}
+function renderScreen(screen) {
   if (screen === 'anual')   daRender();
   if (screen === 'sabados') sabRender();
   if (screen === 'horarios' && !phDirty) phRender();
@@ -9029,7 +9220,7 @@ async function importBackup(event) {
   if (backup.js_dist_anual?.length) {
     await sbDelete('js_dist_anual','?id=gt.0');
     for (const row of backup.js_dist_anual) {
-      const r = await sbUpsert('js_dist_anual', {key: row.key, data: row.data, updated_at: new Date().toISOString()});
+      const r = await sbUpsert('js_dist_anual', {key: row.key, data: row.data, updated_at: new Date().toISOString()}, {force: true});
       if (!r) ok = false;
     }
   }
@@ -9059,85 +9250,125 @@ function showBackupToast(msg) {
 // ═══════════════════════════════════════════════════════════════
 // INIT — cargar todo desde Supabase
 // ═══════════════════════════════════════════════════════════════
+// Vuelca un registro del servidor al estado en memoria del módulo que corresponde.
+// collect: solo durante la carga inicial, para ordenar el formato viejo/nuevo de Monitoreos.
+function applyRow(key, data, collect) {
+    if (key.startsWith('tareas_')) {
+      const year = parseInt(key.replace('tareas_',''));
+      daSavedData[year] = data;
+    } else if (key.startsWith('sabados_')) {
+      const year = parseInt(key.replace('sabados_',''));
+      sabSavedData[year] = data;
+    } else if (key.startsWith('horarios_')) {
+      const month = key.replace('horarios_','');
+      phSavedData[month] = data;
+    } else if (key.startsWith('colab_') && key !== 'colab_listas') {
+      const month = key.replace('colab_','');
+      colabSavedData[month] = data;
+    } else if (key === 'colab_listas') {
+      colabListas = data;
+      colabMigrateListas();
+    } else if (key.startsWith('equipos_')) {
+      const year = parseInt(key.replace('equipos_',''));
+      eqSavedData[year] = data;
+    } else if (key.startsWith('licencias_')) {
+      const year = parseInt(key.replace('licencias_',''));
+      licSavedData[year] = data;
+    } else if (key.startsWith('dayoff_')) {
+      const year = parseInt(key.replace('dayoff_',''));
+      doffSavedData[year] = data;
+    } else if (key.startsWith('capacitaciones_')) {
+      const year = parseInt(key.replace('capacitaciones_',''));
+      capSavedData[year] = data;
+    } else if (key.startsWith('salientes_')) {
+      const year = parseInt(key.replace('salientes_',''));
+      salSavedData[year] = data;
+    } else if (key.startsWith('reuniones_colab_')) {
+      const year = parseInt(key.replace('reuniones_colab_',''));
+      reunColabData[year] = data;
+    } else if (key === 'distribucion_box') {
+      // formato viejo (una sola foto sin mes) — queda como respaldo/punto de partida
+      if (Array.isArray(data) && data.length) boxLegacyData = data;
+    } else if (key.startsWith('distribucion_box_')) {
+      const mkey = key.replace('distribucion_box_', '');
+      boxSavedData[mkey] = data;
+    } else if (key === 'sup_master_list') {
+      if (Array.isArray(data) && data.length) SUP_MASTER = data;
+    } else if (key.startsWith('monitoreos_')) {
+      const rest = key.slice('monitoreos_'.length);
+      const pipeIdx = rest.indexOf('|');
+      if (pipeIdx === -1) { if (collect) collect.monOld.push({ wk: rest, data }); else monSavedData[rest] = data; }
+      else {
+        const wk = rest.slice(0, pipeIdx), sup = rest.slice(pipeIdx + 1);
+        if (collect) collect.monNew.push({ wk, sup, data });
+        else { if (!monSavedData[wk]) monSavedData[wk] = {}; monSavedData[wk][sup] = data; }
+      }
+    } else if (key === 'audit_log') {
+      if (Array.isArray(data)) auditLog = data;
+    }
+}
+
+function rerenderCurrentScreen() {
+  try {
+    if (currentScreen === 'horarios' && phDirty) return; // no pisar una planilla a medio editar
+    renderScreen(currentScreen);
+  } catch(e) { console.error(e); }
+}
+
+function showLoadErrorBanner() {
+  let el = document.getElementById('load-error-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'load-error-banner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:100000;background:#b91c1c;color:#fff;padding:14px 18px;font-size:14px;font-weight:700;display:flex;gap:14px;align-items:center;justify-content:center;flex-wrap:wrap;box-shadow:0 4px 16px rgba(0,0,0,.3);';
+    el.innerHTML = '<span>⛔ No se pudieron cargar los datos del servidor. Para proteger la información, NO se va a guardar nada desde esta pestaña.</span><button type="button" onclick="location.reload()" style="background:#fff;color:#b91c1c;border:none;border-radius:8px;padding:8px 14px;font-weight:800;cursor:pointer;">🔄 Recargar</button>';
+    document.body.appendChild(el);
+  }
+}
+
 async function init() {
   setSyncStatus('loading');
+  dataLoaded = false;
 
-  // 1. Crear tabla js_dist_anual si no existe (via upsert vacío la inicializa)
-  // 2. Cargar overrides de rotación
-  const ovRows = await sbGetAll('rotacion_overrides','?select=key,role_id');
-  if (Array.isArray(ovRows)) {
-    ovRows.forEach(row => { rotOverrides[row.key] = row.role_id; });
+  // Carga completa con reintentos. Si falla, la app queda en modo solo lectura (nada se guarda),
+  // porque guardar sobre una pantalla mal cargada borraría los datos reales del servidor.
+  let ovRows = null, rows = null;
+  for (let intento = 1; intento <= 4 && rows === null; intento++) {
+    try {
+      ovRows = await sbGetAll('rotacion_overrides','?select=key,role_id');
+      // El historial de cambios NO se baja acá (es lo más pesado); su pantalla lo trae aparte
+      rows = await sbGetAll('js_dist_anual','?select=key,data&key=neq.audit_log');
+    } catch(e) {
+      console.error('Carga inicial falló (intento ' + intento + '):', e);
+      ovRows = null; rows = null;
+      if (intento < 4) await new Promise(res => setTimeout(res, 1500 * intento));
+    }
+  }
+  if (rows === null) {
+    setSyncStatus('error');
+    showLoadErrorBanner();
+    return;
   }
 
-  // 3. Cargar datos de distribución anual + sábados + horarios
-  const rows = await sbGetAll('js_dist_anual','?select=key,data');
-  const monOldRows = []; // formato viejo: 'monitoreos_<semana>' con los 12 supervisores adentro
-  const monNewRows = []; // formato nuevo: 'monitoreos_<semana>|<supervisor>', una fila por supervisor
-  if (Array.isArray(rows)) {
-    rows.forEach(row => {
-      try {
-        serverSnapshot[row.key] = row.data;
-        const data = JSON.parse(row.data);
-        if (row.key.startsWith('tareas_')) {
-          const year = parseInt(row.key.replace('tareas_',''));
-          daSavedData[year] = data;
-        } else if (row.key.startsWith('sabados_')) {
-          const year = parseInt(row.key.replace('sabados_',''));
-          sabSavedData[year] = data;
-        } else if (row.key.startsWith('horarios_')) {
-          const month = row.key.replace('horarios_','');
-          phSavedData[month] = data;
-        } else if (row.key.startsWith('colab_') && row.key !== 'colab_listas') {
-          const month = row.key.replace('colab_','');
-          colabSavedData[month] = data;
-        } else if (row.key === 'colab_listas') {
-          colabListas = data;
-          colabMigrateListas();
-        } else if (row.key.startsWith('equipos_')) {
-          const year = parseInt(row.key.replace('equipos_',''));
-          eqSavedData[year] = data;
-        } else if (row.key.startsWith('licencias_')) {
-          const year = parseInt(row.key.replace('licencias_',''));
-          licSavedData[year] = data;
-        } else if (row.key.startsWith('dayoff_')) {
-          const year = parseInt(row.key.replace('dayoff_',''));
-          doffSavedData[year] = data;
-        } else if (row.key.startsWith('capacitaciones_')) {
-          const year = parseInt(row.key.replace('capacitaciones_',''));
-          capSavedData[year] = data;
-        } else if (row.key.startsWith('salientes_')) {
-          const year = parseInt(row.key.replace('salientes_',''));
-          salSavedData[year] = data;
-        } else if (row.key.startsWith('reuniones_colab_')) {
-          const year = parseInt(row.key.replace('reuniones_colab_',''));
-          reunColabData[year] = data;
-        } else if (row.key === 'distribucion_box') {
-          // formato viejo (una sola foto sin mes) — queda como respaldo/punto de partida
-          if (Array.isArray(data) && data.length) boxLegacyData = data;
-        } else if (row.key.startsWith('distribucion_box_')) {
-          const mkey = row.key.replace('distribucion_box_', '');
-          boxSavedData[mkey] = data;
-        } else if (row.key === 'sup_master_list') {
-          if (Array.isArray(data) && data.length) SUP_MASTER = data;
-        } else if (row.key.startsWith('monitoreos_')) {
-          const rest = row.key.slice('monitoreos_'.length);
-          const pipeIdx = rest.indexOf('|');
-          if (pipeIdx === -1) monOldRows.push({ wk: rest, data });
-          else monNewRows.push({ wk: rest.slice(0, pipeIdx), sup: rest.slice(pipeIdx + 1), data });
-        } else if (row.key === 'audit_log') {
-          if (Array.isArray(data)) auditLog = data;
-        }
-      } catch(e) {}
-    });
-    // Monitoreos: primero la base del formato viejo (semanas aún no migradas), y encima
-    // las filas nuevas por supervisor (más recientes, nunca se pisan entre supervisores).
-    monOldRows.forEach(({wk, data}) => { monSavedData[wk] = data; });
-    monNewRows.forEach(({wk, sup, data}) => {
-      if (!monSavedData[wk]) monSavedData[wk] = {};
-      monSavedData[wk][sup] = data;
-    });
-  }
+  ovRows.forEach(row => { rotOverrides[row.key] = row.role_id; });
 
+  const collect = { monOld: [], monNew: [] };
+  rows.forEach(row => {
+    try {
+      serverSnapshot[row.key] = row.data;
+      applyRow(row.key, JSON.parse(row.data), collect);
+    } catch(e) {}
+  });
+  // Monitoreos: primero la base del formato viejo (semanas aún no migradas), y encima
+  // las filas nuevas por supervisor (más recientes, nunca se pisan entre supervisores).
+  collect.monOld.forEach(({wk, data}) => { monSavedData[wk] = data; });
+  collect.monNew.forEach(({wk, sup, data}) => {
+    if (!monSavedData[wk]) monSavedData[wk] = {};
+    monSavedData[wk][sup] = data;
+  });
+
+  dataLoaded = true;
+  const banner = document.getElementById('load-error-banner'); if (banner) banner.remove();
   setSyncStatus('ok');
   monInitDone = true;
   if (currentScreen === 'monitoreos') { monDraftOffer(); monRender(); }
@@ -9149,14 +9380,14 @@ async function init() {
   supMasterAutoSeed();
   boxAutoSeed();
   renderLandingToday();
+  rerenderCurrentScreen();
 }
 
 // ── Auto-guardado inicial del equipo Entrena2 2026 (semilla base) ──
 async function eqAutoSeed() {
   try {
-    if (!eqSavedData[2026]) {
-      eqSavedData[2026] = JSON.parse(JSON.stringify(EQUIPOS_SEED_2026));
-      await sbUpsert('js_dist_anual', {key:'equipos_2026', data:JSON.stringify(eqSavedData[2026]), updated_at:new Date().toISOString()});
+    if (dataLoaded && !eqSavedData[2026]) {
+      await sbInsertIfMissing('equipos_2026', EQUIPOS_SEED_2026);
     }
   } catch(e) {}
 }
@@ -9165,16 +9396,15 @@ async function eqAutoSeed() {
 //    se guardan solas en Supabase la primera vez que se abre el link ──
 async function colabAutoSeed() {
   try {
+    if (!dataLoaded) return;
     const needsMonth = !colabSavedData['2026-07'];
     if (needsMonth) {
-      const seed = colabDefaultTemplate();
-      colabSavedData['2026-07'] = seed;
-      await sbUpsert('js_dist_anual', {key:'colab_2026-07', data:JSON.stringify(seed), updated_at:new Date().toISOString()});
+      await sbInsertIfMissing('colab_2026-07', colabDefaultTemplate());
     }
     // Solo guarda las listas si todavía nadie las guardó (no existe colab_listas en Supabase)
     const listasRows = await sbGet('js_dist_anual','?key=eq.colab_listas&select=key');
     if (Array.isArray(listasRows) && listasRows.length === 0) {
-      await sbUpsert('js_dist_anual', {key:'colab_listas', data:JSON.stringify(colabListas), updated_at:new Date().toISOString()});
+      await sbInsertIfMissing('colab_listas', colabListas);
     }
   } catch(e) {}
 }
