@@ -1337,10 +1337,94 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 #loginBox .lb-sub{font-size:11.5px;color:#64748b;margin-bottom:18px;line-height:1.4;}
 #loginBox input{width:100%;padding:10px 12px;margin:6px 0;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;outline:none;transition:.15s;}
 #loginBox input:focus{border-color:var(--impulsa,#5b9bd5);box-shadow:0 0 0 3px rgba(91,155,213,.12);}
-#loginBox button{width:100%;padding:11px;margin-top:10px;border:none;border-radius:10px;background:var(--impulsa,#5b9bd5);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:.15s;}
-#loginBox button:hover{background:var(--impulsa-md,#47799f);}
+
+/* ── BOTÓN CON EFECTO SNAKE (BORDE ANIMADO) ── */
+#loginBox button.btn-snake {
+  position: relative;
+  width: 100%;
+  padding: 12px;
+  margin-top: 12px;
+  border: none;
+  border-radius: 10px;
+  background: #1a2340;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  font-family: inherit;
+  overflow: hidden;
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+  box-shadow: 0 4px 15px rgba(26, 35, 64, 0.25);
+}
+#loginBox button.btn-snake:hover {
+  background: #232f57;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 205, 148, 0.35);
+}
+#loginBox button.btn-snake span {
+  position: absolute;
+  display: block;
+}
+/* Línea 1: Superior (Izquierda a Derecha) */
+#loginBox button.btn-snake span:nth-child(1) {
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2.5px;
+  background: linear-gradient(90deg, transparent, #00cd94, #5b9bd5);
+  animation: snakeTop 2s linear infinite;
+}
+@keyframes snakeTop {
+  0% { left: -100%; }
+  50%, 100% { left: 100%; }
+}
+/* Línea 2: Derecha (Arriba a Abajo) */
+#loginBox button.btn-snake span:nth-child(2) {
+  top: -100%;
+  right: 0;
+  width: 2.5px;
+  height: 100%;
+  background: linear-gradient(180deg, transparent, #00cd94, #5b9bd5);
+  animation: snakeRight 2s linear infinite;
+  animation-delay: 0.5s;
+}
+@keyframes snakeRight {
+  0% { top: -100%; }
+  50%, 100% { top: 100%; }
+}
+/* Línea 3: Inferior (Derecha a Izquierda) */
+#loginBox button.btn-snake span:nth-child(3) {
+  bottom: 0;
+  right: -100%;
+  width: 100%;
+  height: 2.5px;
+  background: linear-gradient(270deg, transparent, #00cd94, #5b9bd5);
+  animation: snakeBottom 2s linear infinite;
+  animation-delay: 1s;
+}
+@keyframes snakeBottom {
+  0% { right: -100%; }
+  50%, 100% { right: 100%; }
+}
+/* Línea 4: Izquierda (Abajo a Arriba) */
+#loginBox button.btn-snake span:nth-child(4) {
+  bottom: -100%;
+  left: 0;
+  width: 2.5px;
+  height: 100%;
+  background: linear-gradient(360deg, transparent, #00cd94, #5b9bd5);
+  animation: snakeLeft 2s linear infinite;
+  animation-delay: 1.5s;
+}
+@keyframes snakeLeft {
+  0% { bottom: -100%; }
+  50%, 100% { bottom: 100%; }
+}
+
 #loginBox #e{color:#e74c3c;font-size:11px;margin-top:8px;min-height:14px;}
 </style>
+
 <div id="loginOverlay">
   <div id="loginBox">
     <svg viewBox="0 0 330 82" style="height:52px; width:auto; margin:0 auto 12px; display:block;" xmlns="http://www.w3.org/2000/svg">
@@ -1353,7 +1437,13 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
     <div class="lb-sub">Organización Supers</div>
     <input id="u" placeholder="Usuario" autocomplete="username">
     <input id="p" type="password" placeholder="Contraseña" autocomplete="current-password">
-    <button onclick="login()">Ingresar</button>
+    <button class="btn-snake" onclick="login()">
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      Ingresar
+    </button>
     <p id="e"></p>
   </div>
 </div>
