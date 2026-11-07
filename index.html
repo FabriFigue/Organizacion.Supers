@@ -1326,7 +1326,6 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 <body>
 
 <style>
-/* ── FONDOS Y TARJETAS ── */
 #loginOverlay{position:fixed;inset:0;
   background:
     radial-gradient(circle at center, rgba(91, 155, 213, 0.65) 0%, transparent 55%),
@@ -1344,7 +1343,6 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 #loginBox input:focus{border-color:var(--impulsa,#5b9bd5);box-shadow:0 0 0 3px rgba(91,155,213,.12);}
 #loginBox #e{color:#e74c3c;font-size:11px;margin-top:8px;min-height:14px;}
 
-/* ── ANIMACIÓN DEL FONDO ── */
 @keyframes meshFluid {
   0%   { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
   25%  { background-position: 100% 0%, 100% 100%, 0% 100%, 0% 0%, 0 0; }
@@ -1353,69 +1351,24 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   100% { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
 }
 
-/* ── BOTÓN SNAKE (ESTILO ADMINISTRADOR EXACTO) ── */
-@property --angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
+@property --angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
 #loginBox .btn-snake-container {
-  margin-top: 14px;
-  position: relative;
-  width: 100%;
-  height: 48px;
-  border-radius: 24px; /* Borde bien redondeado tipo píldora */
-  /* La magia: agregamos #0f152b como fondo base detrás del gradiente para tapar el blanco */
+  margin-top: 14px; position: relative; width: 100%; height: 48px; border-radius: 24px;
   background: conic-gradient(from var(--angle), transparent 10%, #00cd94 40%, #5b9bd5 60%, #b688ea 90%, transparent 100%), #0f152b;
-  padding: 2px; 
-  animation: rotateBorder 3s linear infinite;
-  box-shadow: 0 4px 15px rgba(26, 35, 64, 0.2);
+  padding: 2px; animation: rotateBorder 3s linear infinite; box-shadow: 0 4px 15px rgba(26, 35, 64, 0.2);
 }
-
-@keyframes rotateBorder {
-  0% { --angle: 0deg; }
-  100% { --angle: 360deg; }
-}
-
+@keyframes rotateBorder { 0% { --angle: 0deg; } 100% { --angle: 360deg; } }
 #loginBox button.btn-snake {
-  width: 100%;
-  height: 100%;
-  background: #0f152b; 
-  border-radius: 22px; /* Calza perfecto dentro del padding de 2px */
-  border: none;
-  color: #a3b8d6; 
-  font-size: 14.5px;
-  font-weight: 500;
-  letter-spacing: 0.3px;
-  cursor: pointer;
-  font-family: inherit;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px; 
-  transition: color .2s ease, background .2s ease;
+  width: 100%; height: 100%; background: #0f152b; border-radius: 22px; border: none; color: #a3b8d6;
+  font-size: 14.5px; font-weight: 500; letter-spacing: 0.3px; cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 8px; transition: color .2s ease, background .2s ease;
 }
-
-#loginBox button.btn-snake:hover {
-  background: #151d38;
-  color: #fff;
-}
-
-#loginBox button.btn-snake svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
+#loginBox button.btn-snake:hover { background: #151d38; color: #fff; }
+#loginBox button.btn-snake svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 </style>
 
 <div id="loginOverlay">
   <div id="loginBox">
-    <svg viewBox="0 0 330 82" style="height:52px; width:auto; margin:0 auto 12px; display:block;" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 330 82" style="height:48px; width:auto; margin:0 auto 12px; display:block;" xmlns="http://www.w3.org/2000/svg">
       <circle cx="30" cy="30" r="24" fill="none" stroke="#4169e1" stroke-width="3.5"/>
       <text x="29" y="38" font-family="'Inter', Arial, sans-serif" font-size="22" font-weight="800" font-style="italic" fill="#4169e1" text-anchor="middle">JS</text>
       <text x="65" y="39" font-family="'Inter', Arial, sans-serif" font-size="31" font-weight="800" font-style="italic" fill="#4169e1" letter-spacing="0.5">JERÁRQUICOS</text>
@@ -1425,14 +1378,12 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
     <div class="lb-sub">Organización Supers</div>
     <input id="u" placeholder="Usuario" autocomplete="username">
     <input id="p" type="password" placeholder="Contraseña" autocomplete="current-password">
-    
     <div class="btn-snake-container">
       <button class="btn-snake" onclick="login()">
         <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
         Ingresar
       </button>
     </div>
-    
     <p id="e"></p>
   </div>
 </div>
