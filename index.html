@@ -1326,6 +1326,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 <body>
 
 <style>
+/* ── FONDOS Y TARJETAS ── */
 #loginOverlay{position:fixed;inset:0;
   background:
     radial-gradient(circle at center, rgba(91, 155, 213, 0.65) 0%, transparent 55%),
@@ -1343,6 +1344,7 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 #loginBox input:focus{border-color:var(--impulsa,#5b9bd5);box-shadow:0 0 0 3px rgba(91,155,213,.12);}
 #loginBox #e{color:#e74c3c;font-size:11px;margin-top:8px;min-height:14px;}
 
+/* ── ANIMACIÓN DEL FONDO ── */
 @keyframes meshFluid {
   0%   { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
   25%  { background-position: 100% 0%, 100% 100%, 0% 100%, 0% 0%, 0 0; }
@@ -1351,29 +1353,29 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   100% { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
 }
 
+/* ── BOTÓN SNAKE (ESTILO ADMINISTRADOR EXACTO) ── */
 @property --angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+
 #loginBox .btn-snake-container {
-  margin-top: 14px; position: relative; width: 100%; height: 48px; border-radius: 24px;
+  margin-top: 14px; position: relative; width: 100%; height: 48px; border-radius: 24px; 
   background: conic-gradient(from var(--angle), transparent 10%, #00cd94 40%, #5b9bd5 60%, #b688ea 90%, transparent 100%), #0f152b;
   padding: 2px; animation: rotateBorder 3s linear infinite; box-shadow: 0 4px 15px rgba(26, 35, 64, 0.2);
 }
+
 @keyframes rotateBorder { 0% { --angle: 0deg; } 100% { --angle: 360deg; } }
+
 #loginBox button.btn-snake {
-  width: 100%; height: 100%; background: #0f152b; border-radius: 22px; border: none; color: #a3b8d6;
+  width: 100%; height: 100%; background: #0f152b; border-radius: 22px; border: none; color: #a3b8d6; 
   font-size: 14.5px; font-weight: 500; letter-spacing: 0.3px; cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 8px; transition: color .2s ease, background .2s ease;
 }
+
 #loginBox button.btn-snake:hover { background: #151d38; color: #fff; }
 #loginBox button.btn-snake svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 </style>
 
 <div id="loginOverlay">
   <div id="loginBox">
-    <svg viewBox="0 0 330 82" style="height:48px; width:auto; margin:0 auto 12px; display:block;" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="30" cy="30" r="24" fill="none" stroke="#4169e1" stroke-width="3.5"/>
-      <text x="29" y="38" font-family="'Inter', Arial, sans-serif" font-size="22" font-weight="800" font-style="italic" fill="#4169e1" text-anchor="middle">JS</text>
-      <text x="65" y="39" font-family="'Inter', Arial, sans-serif" font-size="31" font-weight="800" font-style="italic" fill="#4169e1" letter-spacing="0.5">JERÁRQUICOS</text>
-      <text x="205" y="72" font-family="'Inter', Arial, sans-serif" font-size="29" font-weight="500" font-style="italic" fill="#4169e1">Salud</text>
-    </svg>
+    <img src="https://jerarquicos.com/wp-content/uploads/2024/01/jerarquicos-logo.svg" alt="Jerárquicos Salud" style="height: 52px; width: auto; margin: 0 auto 12px; display: block;">
     <h2>Acceso Supervisores</h2>
     <div class="lb-sub">Organización Supers</div>
     <input id="u" placeholder="Usuario" autocomplete="username">
@@ -1408,12 +1410,7 @@ document.getElementById('p').addEventListener('keydown', evt => { if(evt.key==='
 
     <div class="landing-top">
       <div class="landing-brand">
-        <svg viewBox="0 0 330 82" style="height:42px; width:auto; flex-shrink:0; filter:drop-shadow(0 2px 8px rgba(0,0,0,0.28));" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="30" cy="30" r="24" fill="none" stroke="#6ea8fe" stroke-width="3.5"/>
-          <text x="29" y="38" font-family="'Inter', Arial, sans-serif" font-size="22" font-weight="800" font-style="italic" fill="#6ea8fe" text-anchor="middle">JS</text>
-          <text x="65" y="39" font-family="'Inter', Arial, sans-serif" font-size="31" font-weight="800" font-style="italic" fill="#6ea8fe" letter-spacing="0.5">JERÁRQUICOS</text>
-          <text x="205" y="72" font-family="'Inter', Arial, sans-serif" font-size="29" font-weight="500" font-style="italic" fill="#6ea8fe">Salud</text>
-        </svg>
+        <img src="https://jerarquicos.com/wp-content/uploads/2024/01/jerarquicos-logo.svg" alt="Jerárquicos Salud" style="height: 46px; width: auto; flex-shrink: 0; filter: brightness(0) invert(1) drop-shadow(0 2px 8px rgba(0,0,0,0.3));">
         <div class="landing-brand-txt">
           <h1>Organización Supers</h1>
         </div>
@@ -1549,12 +1546,7 @@ document.getElementById('p').addEventListener('keydown', evt => { if(evt.key==='
 <!-- SIDEBAR -->
 <nav class="sidebar" id="sidebar">
   <div class="sb-brand">
-    <svg viewBox="0 0 330 82" style="height:32px; width:auto; margin-bottom:10px; display:block;" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="30" cy="30" r="24" fill="none" stroke="#6ea8fe" stroke-width="3.5"/>
-      <text x="29" y="38" font-family="'Inter', Arial, sans-serif" font-size="22" font-weight="800" font-style="italic" fill="#6ea8fe" text-anchor="middle">JS</text>
-      <text x="65" y="39" font-family="'Inter', Arial, sans-serif" font-size="31" font-weight="800" font-style="italic" fill="#6ea8fe" letter-spacing="0.5">JERÁRQUICOS</text>
-      <text x="205" y="72" font-family="'Inter', Arial, sans-serif" font-size="29" font-weight="500" font-style="italic" fill="#6ea8fe">Salud</text>
-    </svg>
+    <img src="https://jerarquicos.com/wp-content/uploads/2024/01/jerarquicos-logo.svg" alt="Jerárquicos Salud" style="height: 32px; width: auto; margin-bottom: 10px; display: block; filter: brightness(0) invert(1);">
     <div class="sb-title">Organización Supers</div>
   </div>
   <div class="sb-nav">
