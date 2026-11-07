@@ -1072,9 +1072,12 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 }
 
 /* ── LANDING ── */
-@keyframes meshShift {
-  0%,100% { background-position: 0% 0%, 100% 0%, 50% 100%, 0 0; }
-  50% { background-position: 12% 8%, 88% 12%, 46% 92%, 0 0; }
+@keyframes meshFluid {
+  0%   { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
+  25%  { background-position: 100% 0%, 100% 100%, 0% 100%, 0% 0%, 0 0; }
+  50%  { background-position: 100% 100%, 0% 100%, 0% 0%, 100% 0%, 0 0; }
+  75%  { background-position: 0% 100%, 0% 0%, 100% 0%, 100% 100%, 0 0; }
+  100% { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
 }
 @keyframes landingIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
 @keyframes alertPulse{0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,.35);}50%{box-shadow:0 0 0 6px rgba(251,191,36,0);}}
@@ -1083,12 +1086,13 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   position:fixed;top:0;left:0;width:100%;height:100%;
   display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
   background:
-    radial-gradient(circle at 15% 20%, rgba(108,92,231,.55) 0%, transparent 45%),
-    radial-gradient(circle at 85% 12%, rgba(0,205,148,.45) 0%, transparent 45%),
-    radial-gradient(circle at 50% 100%, rgba(91,155,213,.55) 0%, transparent 55%),
-    linear-gradient(160deg,#1a2340 0%,#232f57 100%);
-  background-size:140% 140%,140% 140%,140% 140%,100% 100%;
-  animation:meshShift 20s ease-in-out infinite;
+    radial-gradient(circle at center, rgba(91, 155, 213, 0.65) 0%, transparent 55%),   /* Azul Impulsa */
+    radial-gradient(circle at center, rgba(0, 205, 148, 0.55) 0%, transparent 55%),    /* Verde Avanza */
+    radial-gradient(circle at center, rgba(182, 136, 234, 0.55) 0%, transparent 55%),  /* Violeta Conecta */
+    radial-gradient(circle at center, rgba(243, 156, 18, 0.45) 0%, transparent 55%),   /* Naranja Save */
+    linear-gradient(160deg, #1a2340 0%, #232f57 100%);
+  background-size: 200% 200%, 200% 200%, 200% 200%, 200% 200%, 100% 100%;
+  animation: meshFluid 24s ease-in-out infinite;
   padding:36px 20px 40px;box-sizing:border-box;
   z-index:9999;overflow-y:auto;
   -webkit-overflow-scrolling:touch;
@@ -1324,12 +1328,13 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 <style>
 #loginOverlay{position:fixed;inset:0;
   background:
-    radial-gradient(circle at 15% 20%, rgba(108,92,231,.55) 0%, transparent 45%),
-    radial-gradient(circle at 85% 12%, rgba(0,205,148,.45) 0%, transparent 45%),
-    radial-gradient(circle at 50% 100%, rgba(91,155,213,.55) 0%, transparent 55%),
-    linear-gradient(160deg,#1a2340 0%,#232f57 100%);
-  background-size:140% 140%,140% 140%,140% 140%,100% 100%;
-  animation:meshShift 20s ease-in-out infinite;
+    radial-gradient(circle at center, rgba(91, 155, 213, 0.65) 0%, transparent 55%),
+    radial-gradient(circle at center, rgba(0, 205, 148, 0.55) 0%, transparent 55%),
+    radial-gradient(circle at center, rgba(182, 136, 234, 0.55) 0%, transparent 55%),
+    radial-gradient(circle at center, rgba(243, 156, 18, 0.45) 0%, transparent 55%),
+    linear-gradient(160deg, #1a2340 0%, #232f57 100%);
+  background-size: 200% 200%, 200% 200%, 200% 200%, 200% 200%, 100% 100%;
+  animation: meshFluid 24s ease-in-out infinite;
   display:flex;align-items:center;justify-content:center;z-index:99999;font-family:'Inter','Segoe UI',sans-serif;padding:20px;}
 #loginBox{background:#fff;padding:32px 28px;border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);width:100%;max-width:320px;text-align:center;}
 #loginBox h2{font-size:16px;font-weight:700;color:#1e293b;margin-bottom:4px;}
