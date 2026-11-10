@@ -458,6 +458,14 @@ body{font-family:'Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--
 .mon-dot.on{background:var(--mon);} .mon-dot.on.inbox{background:var(--mon-inbox);}
 .mon-state{font-size:11px;font-weight:700;min-width:104px;text-align:right;white-space:nowrap;}
 .mon-state.listo{color:var(--avanza);} .mon-state.incompleto{color:#b7791f;} .mon-state.vacio{color:var(--muted);font-weight:600;}
+.resp-list{display:flex;flex-direction:column;gap:6px;}
+.resp-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:12px;}
+.resp-row b{font-weight:700;}
+.resp-row .resp-meta{color:var(--muted);font-size:11px;}
+.resp-row .resp-sp{flex:1;}
+.resp-row button{font-size:11px;padding:5px 10px;}
+.resp-diff{margin:6px 0 2px;padding:8px 12px;background:var(--bg);border-radius:8px;font-size:11px;color:var(--text);max-height:220px;overflow:auto;}
+.resp-diff li{margin-left:14px;}
 .mon-fecha-warn{font-size:10.5px;font-weight:600;color:#b45309;margin:-2px 0 6px;}
 .mon-fecha-warn:empty{display:none;}
 .mon-unsaved{font-size:10.5px;font-weight:700;color:#b7791f;background:var(--save-lt);padding:3px 8px;border-radius:20px;white-space:nowrap;}
@@ -1933,6 +1941,22 @@ document.getElementById('p').addEventListener('keydown', evt => { if(evt.key==='
           <div class="aud-empty" id="aud-empty" style="display:none;">Todavía no hay cambios registrados.</div>
         </div>
       </div>
+      <div class="card" id="resp-card" style="margin-top:16px;">
+        <div class="card-header">
+          <h2>🛟 Respaldos</h2>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="resp-buscar" placeholder="Buscar sección, supervisor, mes…" oninput="respRenderSecciones()" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:12px;color:var(--text);background:var(--card);min-width:200px;">
+            <button class="btn" onclick="respCargar()">🔄 Actualizar</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <p style="font-size:11.5px;color:var(--muted);margin-bottom:12px;">
+            El servidor guarda solo una copia de la versión anterior <b>cada vez</b> que algo cambia o se borra, en cualquier pantalla. Nadie puede borrar estos respaldos desde la app. Se conserva todo de los últimos 30 días y la última versión de cada día durante un año. Restaurar también es reversible: la versión que se reemplaza queda respaldada.
+          </p>
+          <div id="resp-secciones" class="resp-list"><div class="aud-empty">Tocá 🔄 Actualizar para ver los respaldos.</div></div>
+          <div id="resp-versiones" style="display:none;"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ══ SCREEN: LICENCIAS SUPERVISORES ══ -->
@@ -2363,7 +2387,7 @@ async function sbCasWrite(key, compute, tries = 6) {
       const tsFilter = row.updated_at == null ? 'updated_at=is.null' : 'updated_at=eq.' + encodeURIComponent(row.updated_at);
       const r = await fetch(SB_URL + '/rest/v1/js_dist_anual?key=eq.' + enc + '&' + tsFilter, {
         method: 'PATCH', headers: {...sbH(), 'Prefer': 'return=representation'},
-        body: JSON.stringify({data: newData, updated_at: nowIso})
+        body: JSON.stringify({data: newData, updated_at: nowIso, updated_by: currentSupUser || null})
       });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const out = await r.json();
@@ -2371,7 +2395,7 @@ async function sbCasWrite(key, compute, tries = 6) {
     } else {
       const r = await fetch(SB_URL + '/rest/v1/js_dist_anual', {
         method: 'POST', headers: {...sbH(), 'Prefer': 'return=minimal'},
-        body: JSON.stringify({key, data: newData, updated_at: nowIso})
+        body: JSON.stringify({key, data: newData, updated_at: nowIso, updated_by: currentSupUser || null})
       });
       if (r.ok) return {serverRaw: undefined, finalRaw: newData};
       if (r.status !== 409) throw new Error('HTTP ' + r.status);
@@ -2383,6 +2407,7 @@ async function sbCasWrite(key, compute, tries = 6) {
 
 let sbBlockedToastAt = 0;
 async function sbUpsert(table, body, opts = {}) {
+  if (body && typeof body === 'object' && !('updated_by' in body) && (table === 'js_dist_anual' || table === 'rotacion_overrides')) body = {...body, updated_by: currentSupUser || null};
   const isDist = table === 'js_dist_anual' && body && body.key;
   const isAudit = isDist && body.key === 'audit_log';
   // Guardado protegido para TODO lo que vive en js_dist_anual (menos el historial, que tiene su propia cola)
@@ -2398,6 +2423,19 @@ async function sbUpsert(table, body, opts = {}) {
     const mineRaw = body.data;
     let mine;
     try { mine = JSON.parse(mineRaw); } catch(e) { mine = undefined; }
+    // Freno anti-borrado: una pantalla mal cargada o vacía genera un guardado mucho más chico que lo
+    // que hay en el servidor. El autoguardado NUNCA guarda eso; el manual pide confirmación explícita.
+    const prevRaw = serverSnapshot[key];
+    if (!opts.allowShrink && !/^monitoreos_/.test(key) && typeof prevRaw === 'string' && prevRaw.length > 400
+        && typeof mineRaw === 'string' && mineRaw.length < prevRaw.length * 0.5) {
+      if (opts.auto) {
+        console.warn('Autoguardado frenado (achica mucho los datos):', key);
+        autoFrenado(key);
+        return false;
+      }
+      const seccion = (typeof auditLabelFor === 'function' ? auditLabelFor(key) : key);
+      if (!confirm(`⚠️ Atención: lo que vas a guardar en "${seccion}" tiene mucha menos información que lo que ya está guardado.\n\nSi no borraste datos a propósito, tocá Cancelar y recargá la página (F5).\n\nAceptar = guardar igual (la versión anterior queda en Respaldos).`)) return false;
+    }
     try {
       let merged = false;
       const res = await sbCasWrite(key, row => {
@@ -2775,7 +2813,9 @@ function eqAddMember(sup) {
   if (!name) return;
   const data = eqGetYearData(eqYear);
   if (!data[sup]) data[sup] = [];
+  if (data[sup].some(n => monNormName(n) === monNormName(name))) { showBackupToast('ℹ️ ' + name + ' ya está en el equipo de ' + sup); return; }
   data[sup].push(name);
+  markDirty();
   eqRender();
 }
 
@@ -2784,14 +2824,17 @@ function eqRemoveMember(sup, idx) {
   if (!data[sup]) return;
   if (!confirm(`¿Quitar a "${data[sup][idx]}" del equipo de ${sup}?`)) return;
   data[sup].splice(idx, 1);
+  markDirty();
   eqRender();
 }
 
-async function eqSave() {
+async function eqSave(auto) {
+  auto = auto === true;
   const btn = document.getElementById('eq-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
-  const ok = await sbUpsert('js_dist_anual', {key:'equipos_'+eqYear, data:JSON.stringify(eqGetYearData(eqYear)), updated_at:new Date().toISOString()});
-  if (btn) {
+  if (btn && !auto) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
+  const ok = await sbUpsert('js_dist_anual', {key:'equipos_'+eqYear, data:JSON.stringify(eqGetYearData(eqYear)), updated_at:new Date().toISOString()}, {auto});
+  if (!auto && !ok) showBackupToast('⚠️ No se pudo guardar — verificá la conexión');
+  if (btn && !auto) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
     setTimeout(() => { btn.textContent = '💾 Guardar'; }, 1800);
@@ -4833,19 +4876,21 @@ function licRemoveSupervisor(sup) {
   licRender();
 }
 
-async function licSave() {
+async function licSave(auto) {
+  auto = auto === true;
   const btn = document.getElementById('lic-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
-  const ok = await sbUpsert('js_dist_anual', {key:'licencias_'+licYear, data:JSON.stringify(licGetYearData(licYear)), updated_at:new Date().toISOString()});
+  if (btn && !auto) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
+  const ok = await sbUpsert('js_dist_anual', {key:'licencias_'+licYear, data:JSON.stringify(licGetYearData(licYear)), updated_at:new Date().toISOString()}, {auto});
   if (ok) clearDirty();
-  if (btn) {
+  if (btn && !auto) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
     if (ok) celebrateButton(btn);
     setTimeout(() => { btn.textContent = '💾 Guardar'; }, 1800);
   }
-  showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
+  if (!auto) showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
   renderLandingToday();
+  return ok;
 }
 
 // ── Formulario rápido "Agregar licencia" ──
@@ -5170,19 +5215,21 @@ function doffRemoveRow(mesIdx, idx) {
   doffSave(); // se guarda al instante
 }
 
-async function doffSave() {
+async function doffSave(auto) {
+  auto = auto === true;
   const btn = document.getElementById('doff-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
-  const ok = await sbUpsert('js_dist_anual', {key:'dayoff_'+doffYear, data:JSON.stringify(doffGetYearData(doffYear)), updated_at:new Date().toISOString()});
+  if (btn && !auto) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
+  const ok = await sbUpsert('js_dist_anual', {key:'dayoff_'+doffYear, data:JSON.stringify(doffGetYearData(doffYear)), updated_at:new Date().toISOString()}, {auto});
   if (ok) clearDirty();
-  if (btn) {
+  if (btn && !auto) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
     if (ok) celebrateButton(btn);
     setTimeout(() => { btn.textContent = '💾 Guardar'; }, 1800);
   }
-  showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
+  if (!auto) showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
   renderLandingToday();
+  return ok;
 }
 
 // ── Formulario rápido "Agregar registro" ──
@@ -5394,19 +5441,21 @@ function salRemoveEntry(idx) {
   salRender();
 }
 
-async function salSave() {
+async function salSave(auto) {
+  auto = auto === true;
   const btn = document.getElementById('sal-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
-  const ok = await sbUpsert('js_dist_anual', {key:'salientes_'+salYear, data:JSON.stringify(salGetYearData(salYear)), updated_at:new Date().toISOString()});
+  if (btn && !auto) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
+  const ok = await sbUpsert('js_dist_anual', {key:'salientes_'+salYear, data:JSON.stringify(salGetYearData(salYear)), updated_at:new Date().toISOString()}, {auto});
   if (ok) clearDirty();
-  if (btn) {
+  if (btn && !auto) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
     if (ok) celebrateButton(btn);
     setTimeout(() => { btn.textContent = '💾 Guardar'; }, 1800);
   }
-  showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
+  if (!auto) showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
   renderLandingToday();
+  return ok;
 }
 
 // ── Formulario rápido "Agregar campaña saliente" ──
@@ -5705,19 +5754,21 @@ function capRemoveEntry(idx) {
   capRender();
 }
 
-async function capSave() {
+async function capSave(auto) {
+  auto = auto === true;
   const btn = document.getElementById('cap-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
-  const ok = await sbUpsert('js_dist_anual', {key:'capacitaciones_'+capYear, data:JSON.stringify(capGetYearData(capYear)), updated_at:new Date().toISOString()});
+  if (btn && !auto) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
+  const ok = await sbUpsert('js_dist_anual', {key:'capacitaciones_'+capYear, data:JSON.stringify(capGetYearData(capYear)), updated_at:new Date().toISOString()}, {auto});
   if (ok) clearDirty();
-  if (btn) {
+  if (btn && !auto) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
     if (ok) celebrateButton(btn);
     setTimeout(() => { btn.textContent = '💾 Guardar'; }, 1800);
   }
-  showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
+  if (!auto) showBackupToast(ok ? randomSavePhrase() : '⚠️ No se pudo guardar — verificá la conexión');
   renderLandingToday();
+  return ok;
 }
 
 // ── Formulario rápido "Agregar capacitación" ──
@@ -6294,12 +6345,14 @@ function boxSetCellTipo(ci, colId, ri, val) {
   boxRender();
 }
 
-async function boxSaveClick() {
+async function boxSaveClick(auto) {
+  auto = auto === true;
   const btn = document.getElementById('box-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
+  if (btn && !auto) { btn.disabled = true; btn.textContent = '💾 Guardando...'; }
   const key = boxCurrentMonth();
-  const ok = await sbUpsert('js_dist_anual', {key: 'distribucion_box_' + key, data: JSON.stringify(boxGetMonthData(key)), updated_at: new Date().toISOString()});
+  const ok = await sbUpsert('js_dist_anual', {key: 'distribucion_box_' + key, data: JSON.stringify(boxGetMonthData(key)), updated_at: new Date().toISOString()}, {auto});
   if (ok) clearDirty();
+  if (auto) return ok;
   if (btn) {
     btn.disabled = false;
     btn.textContent = ok ? '✅ Guardado' : '⚠️ Error';
@@ -6413,7 +6466,15 @@ const SCREENS = {
 let currentScreen = 'rotacion';
 
 function goTo(screen) {
+  if (currentScreen === 'horarios' && screen !== 'horarios' && phDirty && !goTo._autoIntentado) {
+    // Primero intenta guardar solo; si no se pudo, pregunta como siempre.
+    goTo._autoIntentado = true;
+    autoTick(true, 'horarios').finally(() => { goTo(screen); goTo._autoIntentado = false; });
+    return;
+  }
+  goTo._autoIntentado = false;
   if (currentScreen === 'horarios' && screen !== 'horarios' && phDirty) { phGuardLeave(() => goTo(screen)); return; }
+  if (currentScreen !== screen && AUTO_SECCIONES[currentScreen]) autoTick(true, currentScreen);
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('screen-'+screen).classList.add('active');
@@ -6433,11 +6494,12 @@ function renderScreen(screen) {
   if (screen === 'salientes') salRender();
   if (screen === 'equipos') eqRender();
   if (screen === 'monitoreos') { monDraftOffer(); monRender(); }
-  if (screen === 'historial') audRender();
+  if (screen === 'historial') { audRender(); if (!respIndice.length) respCargar(); }
   if (screen === 'licencias') licRender();
   if (screen === 'dayoff') doffRender();
   if (screen === 'capacitaciones') capRender();
   if (screen === 'boxes') boxRender();
+  setTimeout(() => autoBaseline(screen), 0);
 }
 function openSidebar()  { document.getElementById('sidebar').classList.add('open'); document.getElementById('mob-overlay').classList.add('open'); }
 function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('mob-overlay').classList.remove('open'); }
@@ -6914,7 +6976,7 @@ async function rotSaveOverride() {
   rotCalCache={};
   rotCloseModal(); rotRender();
   setSyncStatus('saving');
-  const ok=await sbUpsertRetry('rotacion_overrides',{key:k,role_id:rotSelectedRole,updated_at:new Date().toISOString()});
+  const ok=await sbUpsertRetry('rotacion_overrides',{key:k,role_id:rotSelectedRole,updated_at:new Date().toISOString(),updated_by:currentSupUser||null});
   rotTrackEdit(k, rotSelectedRole, ok);
   setSyncStatus(ok?'ok':'error');
   if(ok){setLastMod(currentSupUser||'Admin');logRotChange(rotModalSup, rotModalDate, oldRole, rotSelectedRole);}
@@ -7344,24 +7406,31 @@ function daUpdateResumen() {
   });
 }
 
-async function daSave() {
+function daCollect() {
+  if(!daEditMode) return null;
   const year=parseInt(document.getElementById('da-year').value);
-  if(!daEditMode){alert('Activá Modo Edición primero.');return;}
-  if(!confirm('¿Confirmás guardar? Esto va a sobrescribir la Distribución Anual '+year+' ya guardada.'))return;
   const data={};
-  MESES.forEach((_,i)=>{
+  for (let i=0;i<12;i++){
     const rid=`r${year}_${i}`;
-    data[`${rid}_h`]=document.getElementById(`${rid}_h`).value;
-    data[`${rid}_tc1`]=document.getElementById(`${rid}_tc1`).value;
-    data[`${rid}_tc2`]=document.getElementById(`${rid}_tc2`).value;
-    data[`${rid}_ts`]=document.getElementById(`${rid}_ts`).value;
-  });
-  daSavedData[year]=data;
+    const els=['h','tc1','tc2','ts'].map(f=>document.getElementById(`${rid}_${f}`));
+    if (els.some(e=>!e)) return null; // pantalla no dibujada: no se arma nada
+    ['h','tc1','tc2','ts'].forEach((f,j)=>{ data[`${rid}_${f}`]=els[j].value; });
+  }
+  return {key:'tareas_'+year, data};
+}
+async function daSave(auto) {
+  auto = auto === true;
+  if(!daEditMode){ if(!auto) alert('Activá Modo Edición primero.'); return false; }
+  const c = daCollect(); if (!c) return false;
+  const year=parseInt(document.getElementById('da-year').value);
+  if(!auto && !confirm('¿Confirmás guardar la Distribución Anual '+year+'? (Los cambios de otros supervisores se conservan.)'))return false;
+  daSavedData[year]=c.data;
   setSyncStatus('saving');
-  const ok=await sbUpsert('js_dist_anual',{key:'tareas_'+year,data:JSON.stringify(data),updated_at:new Date().toISOString()});
+  const ok=await sbUpsert('js_dist_anual',{key:c.key,data:JSON.stringify(c.data),updated_at:new Date().toISOString()},{auto});
   setSyncStatus(ok?'ok':'error');
-  if(ok){alert('✅ Guardado en Supabase');clearDirty();setLastMod(currentSupUser||'Admin');}
-  daRender();
+  if(ok){ if(!auto) alert('✅ Guardado'); clearDirty();setLastMod(currentSupUser||'Admin');}
+  if(!auto) daRender();
+  return ok;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -7454,20 +7523,29 @@ function sabUpdateResumen(){
   });
 }
 
-async function sabSave(){
-  if(!confirm('¿Confirmás guardar? Esto va a sobrescribir las Guardias de Sábados ya guardadas de este año.'))return;
+function sabCollect(){
+  const sels=document.querySelectorAll('#screen-sabados .sab-sel');
+  if(!sels.length) return null; // pantalla no dibujada
   const year=parseInt(document.getElementById('sab-year').value);
   const sab={};
-  document.querySelectorAll('.sab-sel').forEach(s=>sab[s.id]=s.value);
+  sels.forEach(s=>sab[s.id]=s.value);
   const fer=[];
-  document.querySelectorAll('.fer-row').forEach(row=>{
+  document.querySelectorAll('#screen-sabados .fer-row').forEach(row=>{
     fer.push({fd:row.querySelector('.f-dia').value,fs:row.querySelector('.f-sab').value,desc:row.querySelector('.f-desc').value,resp:row.querySelector('.f-resp').value});
   });
-  sabSavedData[year]={sab,fer};
+  return {key:'sabados_'+year, data:{sab,fer}};
+}
+async function sabSave(auto){
+  auto = auto === true;
+  if(!auto && !confirm('¿Confirmás guardar las Guardias de Sábados? (Los cambios de otros supervisores se conservan.)'))return false;
+  const c=sabCollect(); if(!c) return false;
+  const year=parseInt(document.getElementById('sab-year').value);
+  sabSavedData[year]=c.data;
   setSyncStatus('saving');
-  const ok=await sbUpsert('js_dist_anual',{key:'sabados_'+year,data:JSON.stringify({sab,fer}),updated_at:new Date().toISOString()});
+  const ok=await sbUpsert('js_dist_anual',{key:c.key,data:JSON.stringify(c.data),updated_at:new Date().toISOString()},{auto});
   setSyncStatus(ok?'ok':'error');
-  if(ok){alert('✅ Guardado en Supabase');clearDirty();setLastMod(currentSupUser||'Admin');}
+  if(ok){ if(!auto) alert('✅ Guardado'); clearDirty();setLastMod(currentSupUser||'Admin');}
+  return ok;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -7740,10 +7818,12 @@ function phRenderSabados(y,m,startDay){
   while(cnt<5){if(d.getDay()===6){sb.innerHTML+=`<tr><td style="padding:8px 12px;border-bottom:1px solid var(--border)" contenteditable="true">${d.getDate()}/${d.getMonth()+1}</td><td style="padding:8px 12px;border-bottom:1px solid var(--border)" contenteditable="true">${sabGetSup(new Date(d))}</td></tr>`;cnt++;}d.setDate(d.getDate()+1);}
 }
 
-async function phSave(sinConfirmar){
-  if(sinConfirmar!==true && !confirm('¿Confirmás guardar? Esto va a sobrescribir la Planilla de Horarios ya guardada de este mes.'))return false;
-  const month=document.getElementById('ph-month').value;
+function phCollect(){
+  const monthEl=document.getElementById('ph-month'), gb=document.getElementById('ph-guards-body'), sb=document.getElementById('ph-sab-body');
+  if(!monthEl||!gb||!sb) return null;
+  const month=monthEl.value;
   const n=document.querySelectorAll('#ph-header th').length-1;
+  if(n<=0) return null; // planilla no dibujada
   const states=[];
   phSupervisores.forEach((_,sIdx)=>{
     for(let dIdx=0;dIdx<n;dIdx++){
@@ -7751,14 +7831,21 @@ async function phSave(sinConfirmar){
       if(st)states.push({sIdx,dIdx,stClass:st.className,stText:st.innerText,tmText:tm?tm.innerText:''});
     }
   });
-  const data={states,guards:document.getElementById('ph-guards-body').innerHTML,saturdays:document.getElementById('ph-sab-body').innerHTML,duplas:phSupervisores.map(s=>s.d)};
+  const data={states,guards:gb.innerHTML,saturdays:sb.innerHTML,duplas:phSupervisores.map(s=>s.d)};
   if (phAnxHasData()) data.anexos = JSON.parse(JSON.stringify(phAnexos)); // campo nuevo, aditivo: los meses viejos no lo tienen
-  phSavedData[month]=data;
+  return {key:'horarios_'+month, data};
+}
+async function phSave(sinConfirmar){
+  const auto = sinConfirmar === 'auto';
+  if(!auto && sinConfirmar!==true && !confirm('¿Confirmás guardar la Planilla de Horarios? (Los cambios de otros supervisores se conservan.)'))return false;
+  const c=phCollect(); if(!c) return false;
+  const month=document.getElementById('ph-month').value;
+  phSavedData[month]=c.data;
   setSyncStatus('saving');
-  const ok=await sbUpsert('js_dist_anual',{key:'horarios_'+month,data:JSON.stringify(data),updated_at:new Date().toISOString()});
+  const ok=await sbUpsert('js_dist_anual',{key:c.key,data:JSON.stringify(c.data),updated_at:new Date().toISOString()},{auto});
   setSyncStatus(ok?'ok':'error');
-  if(ok){phDirty=false;if(sinConfirmar===true)showBackupToast('✅ Planilla de Horarios guardada');else alert('✅ Guardado en Supabase');clearDirty();setLastMod(currentSupUser||'Admin');}
-  else alert('⚠️ No se pudo guardar la Planilla (problema de conexión). Tus cambios siguen en pantalla.');
+  if(ok){phDirty=false; if(auto){} else if(sinConfirmar===true)showBackupToast('✅ Planilla de Horarios guardada');else alert('✅ Guardado');clearDirty();setLastMod(currentSupUser||'Admin');}
+  else if(!auto) alert('⚠️ No se pudo guardar la Planilla (problema de conexión). Tus cambios siguen en pantalla.');
   return ok;
 }
 
@@ -8960,18 +9047,28 @@ function colabAbsorbNewValues() {
   return changed;
 }
 
-async function colabSave() {
-  if(!confirm('¿Confirmás guardar? Esto va a sobrescribir las Tareas Colaboradores ya guardadas de este mes.'))return;
+function colabCollect() {
+  const mEl = document.getElementById('colab-month'), nEl = document.getElementById('colab-notas');
+  if (!colabCurrent || !mEl || !mEl.value) return null;
+  const data = JSON.parse(JSON.stringify(colabCurrent));
+  if (nEl) data.notas = nEl.value;
+  return {key:'colab_'+mEl.value, data};
+}
+async function colabSave(auto) {
+  auto = auto === true;
+  if(!auto && !confirm('¿Confirmás guardar las Tareas Colaboradores? (Los cambios de otros supervisores se conservan.)'))return false;
+  const c = colabCollect(); if (!c) return false;
   const month = document.getElementById('colab-month').value;
-  colabCurrent.notas = document.getElementById('colab-notas').value;
-  colabSavedData[month] = JSON.parse(JSON.stringify(colabCurrent));
+  colabCurrent.notas = c.data.notas;
+  colabSavedData[month] = c.data;
   const listasChanged = colabAbsorbNewValues();
   setSyncStatus('saving');
-  const ok = await sbUpsert('js_dist_anual', {key:'colab_'+month, data:JSON.stringify(colabSavedData[month]), updated_at:new Date().toISOString()});
+  const ok = await sbUpsert('js_dist_anual', {key:c.key, data:JSON.stringify(colabSavedData[month]), updated_at:new Date().toISOString()},{auto});
   if (listasChanged) { await colabSaveListas(); colabRenderDatalists(); }
   setSyncStatus(ok?'ok':'error');
-  showBackupToast(ok ? '✅ Guardado en Supabase' : '⚠️ No se pudo guardar — verificá la conexión');
+  if (!auto) showBackupToast(ok ? '✅ Guardado' : '⚠️ No se pudo guardar — verificá la conexión');
   if(ok){clearDirty();setLastMod(currentSupUser||'Admin');}
+  return ok;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -9544,6 +9641,233 @@ document.addEventListener('click', e => {
   const t = e.target.closest('.ph-badge,.ph-time,.ph-wbtn,.ph-wbtn-h,.sel-sup,.btn-del');
   if (t && DIRTY_SCREENS.some(id => t.closest('#'+id))) markDirty();
 });
+// ═══════════════════════════════════════════════════════════════
+// RESPALDOS (versiones guardadas por el servidor en respaldo_versiones)
+// ═══════════════════════════════════════════════════════════════
+const RESP_ADMINS = ['Marcos Cortella']; // quiénes pueden restaurar
+let respIndice = [];      // [{tabla, clave, n, ultima}]
+let respAbierta = null;   // {tabla, clave, versiones}
+function respFecha(ts) {
+  if (!ts) return '';
+  const d = new Date(String(ts).includes('T') || /[zZ]|[+-]\d\d:?\d\d$/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z');
+  return d.toLocaleString('es-AR', {day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit'});
+}
+function respEtiqueta(tabla, clave) {
+  if (tabla === 'rotacion_overrides') {
+    if (clave.startsWith('__feriado__|')) return 'Rotación · Feriado ' + clave.slice(12);
+    const i = clave.lastIndexOf('|');
+    return 'Rotación · ' + clave.slice(0, i) + ' · ' + clave.slice(i + 1);
+  }
+  const lbl = auditLabelFor(clave);
+  const m = clave.match(/^monitoreos_(\d{4}-\d{2}-\d{2})(?:\|(.+))?$/);
+  if (m) return 'Monitoreos · ' + monWeekLabel(new Date(m[1] + 'T00:00:00')) + (m[2] ? ' · ' + m[2] : '');
+  const suf = clave.replace(/^[a-z_]+?_(?=\d)/, '');
+  return lbl + (suf && suf !== clave ? ' · ' + suf : '');
+}
+async function respCargar() {
+  const box = document.getElementById('resp-secciones');
+  if (box) box.innerHTML = '<div class="aud-empty">Cargando…</div>';
+  try {
+    const rows = await sbGetStrict('respaldo_versiones', '?select=tabla,clave,guardado_at&order=guardado_at.desc&limit=5000');
+    const idx = {};
+    rows.forEach(r => {
+      const k = r.tabla + '§' + r.clave;
+      if (!idx[k]) idx[k] = { tabla: r.tabla, clave: r.clave, n: 0, ultima: r.guardado_at };
+      idx[k].n++;
+    });
+    respIndice = Object.values(idx).sort((a, b) => String(b.ultima).localeCompare(String(a.ultima)));
+    respAbierta = null;
+    respRenderSecciones();
+  } catch(e) {
+    if (box) box.innerHTML = '<div class="aud-empty">⚠️ No se pudieron traer los respaldos — revisá la conexión.</div>';
+  }
+}
+function respRenderSecciones() {
+  const box = document.getElementById('resp-secciones'), ver = document.getElementById('resp-versiones');
+  if (!box) return;
+  if (ver) ver.style.display = 'none';
+  box.style.display = '';
+  const q = monNormName(document.getElementById('resp-buscar')?.value || '');
+  const lista = respIndice.filter(x => !q || monNormName(respEtiqueta(x.tabla, x.clave) + ' ' + x.clave).includes(q));
+  if (!lista.length) { box.innerHTML = '<div class="aud-empty">' + (respIndice.length ? 'Nada coincide con la búsqueda.' : 'Todavía no hay respaldos.') + '</div>'; return; }
+  box.innerHTML = lista.slice(0, 150).map((x, i) => `<div class="resp-row">
+      <span class="resp-sp"><b>${licEsc(respEtiqueta(x.tabla, x.clave))}</b><br><span class="resp-meta">${x.n} versión(es) · última ${licEsc(respFecha(x.ultima))}</span></span>
+      <button class="btn" onclick="respAbrir('${licJs(x.tabla)}','${licJs(x.clave)}')">Ver versiones</button>
+    </div>`).join('') + (lista.length > 150 ? '<div class="resp-meta" style="padding:6px;">Se muestran 150 — usá el buscador para encontrar el resto.</div>' : '');
+}
+async function respActual(tabla, clave) {
+  if (tabla === 'rotacion_overrides') {
+    const r = await sbGetStrict('rotacion_overrides', '?select=role_id&key=eq.' + encodeURIComponent(clave));
+    return r[0] ? r[0].role_id : null;
+  }
+  const r = await sbGetStrict('js_dist_anual', '?select=data&key=eq.' + encodeURIComponent(clave));
+  return r[0] ? r[0].data : null;
+}
+function respResumenCambios(tabla, viejoRaw, actualRaw) {
+  if (tabla === 'rotacion_overrides') return [`${rolLabel(viejoRaw)} (esta versión) → ${rolLabel(actualRaw)} (hoy)`];
+  let v, a;
+  try { v = viejoRaw ? JSON.parse(viejoRaw) : null; } catch(e) { v = null; }
+  try { a = actualRaw ? JSON.parse(actualRaw) : null; } catch(e) { a = null; }
+  if (jEq(v, a)) return [];
+  const d = auditDiff(a, v); // qué cambiaría si se restaura esta versión
+  return d.length ? d : ['Hay diferencias (detalle no disponible)'];
+}
+async function respAbrir(tabla, clave) {
+  const box = document.getElementById('resp-secciones'), ver = document.getElementById('resp-versiones');
+  if (!ver) return;
+  box.style.display = 'none'; ver.style.display = '';
+  ver.innerHTML = '<div class="aud-empty">Cargando versiones…</div>';
+  try {
+    const rows = await sbGetStrict('respaldo_versiones', '?select=id,data,updated_by,version_at,guardado_at,operacion&tabla=eq.' + encodeURIComponent(tabla) + '&clave=eq.' + encodeURIComponent(clave) + '&order=guardado_at.desc&limit=60');
+    const actual = await respActual(tabla, clave);
+    respAbierta = { tabla, clave, versiones: rows, actual };
+    respRenderVersiones();
+  } catch(e) {
+    ver.innerHTML = '<div class="aud-empty">⚠️ No se pudieron traer las versiones — revisá la conexión.</div>';
+  }
+}
+function respRenderVersiones() {
+  const ver = document.getElementById('resp-versiones');
+  const R = respAbierta; if (!ver || !R) return;
+  const puede = RESP_ADMINS.includes(currentSupUser);
+  const opLbl = { UPDATE: 'antes de un cambio', DELETE: 'antes de borrarse', FOTO: 'foto de respaldo' };
+  ver.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+      <button class="btn" onclick="respRenderSecciones()">‹ Volver</button>
+      <b style="font-size:13px;">${licEsc(respEtiqueta(R.tabla, R.clave))}</b>
+    </div>
+    ${puede ? '' : '<p class="resp-meta" style="margin-bottom:8px;">Solo Marcos puede restaurar versiones. Si necesitás recuperar algo, avisale.</p>'}
+    <div class="resp-list">` + R.versiones.map((v, i) => {
+      const cambios = respResumenCambios(R.tabla, v.data, R.actual);
+      const igual = !cambios.length;
+      return `<div class="resp-row" style="flex-direction:column;align-items:stretch;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span class="resp-sp"><b>Versión del ${licEsc(respFecha(v.version_at))}</b>${v.updated_by ? ' · guardada por ' + licEsc(v.updated_by) : ''}<br>
+          <span class="resp-meta">Respaldada ${licEsc(respFecha(v.guardado_at))} (${opLbl[v.operacion] || v.operacion})${igual ? ' · igual a lo que hay hoy' : ' · ' + cambios.length + ' diferencia(s) con hoy'}</span></span>
+          ${igual ? '' : `<button class="btn" onclick="this.closest('.resp-row').querySelector('.resp-diff').style.display=this.closest('.resp-row').querySelector('.resp-diff').style.display==='none'?'':'none'">Ver diferencias</button>`}
+          ${puede && !igual ? `<button class="btn btn-primary" onclick="respRestaurar(${i})">↩ Restaurar</button>` : ''}
+        </div>
+        ${igual ? '' : `<div class="resp-diff" style="display:none;"><div class="resp-meta" style="margin-bottom:4px;">Si restaurás esta versión:</div><ul>${cambios.slice(0, 80).map(c => '<li>' + licEsc(c) + '</li>').join('')}</ul>${cambios.length > 80 ? '<div class="resp-meta">… y ' + (cambios.length - 80) + ' más</div>' : ''}</div>`}
+      </div>`;
+    }).join('') + '</div>';
+}
+async function respRestaurar(i) {
+  const R = respAbierta; if (!R) return;
+  if (!RESP_ADMINS.includes(currentSupUser)) return;
+  const v = R.versiones[i]; if (!v) return;
+  const nombre = respEtiqueta(R.tabla, R.clave);
+  if (!confirm(`¿Restaurar "${nombre}" a la versión del ${respFecha(v.version_at)}?\n\nLo que hay hoy queda guardado en Respaldos, así que se puede volver atrás.`)) return;
+  setSyncStatus('saving');
+  try {
+    if (R.tabla === 'rotacion_overrides') {
+      const ok = v.data == null
+        ? await sbDeleteRetry('rotacion_overrides', '?key=eq.' + encodeURIComponent(R.clave))
+        : await sbUpsertRetry('rotacion_overrides', { key: R.clave, role_id: v.data, updated_at: new Date().toISOString(), updated_by: currentSupUser || null });
+      if (!ok) throw new Error('no se pudo');
+      if (v.data == null) delete rotOverrides[R.clave]; else rotOverrides[R.clave] = v.data;
+      rotCalCache = {};
+    } else {
+      const res = await sbCasWrite(R.clave, () => v.data);
+      serverSnapshot[R.clave] = res.finalRaw;
+      try { applyRow(R.clave, JSON.parse(v.data)); } catch(e) {}
+      delete autoBase[R.clave]; delete autoUltimo[R.clave];
+      if (R.clave.startsWith('monitoreos_')) { const m = R.clave.match(/^monitoreos_([^|]+)\|(.+)$/); if (m) monDirtyKeys.delete(m[1] + '|' + m[2]); }
+    }
+    setSyncStatus('ok');
+    appendAuditEntry({ ts: new Date().toISOString(), sup: currentSupUser || '', key: R.tabla === 'rotacion_overrides' ? 'rotacion_diaria' : R.clave, label: R.tabla === 'rotacion_overrides' ? 'Rotación Diaria' : auditLabelFor(R.clave), detail: [`Restauró desde Respaldos la versión del ${respFecha(v.version_at)} (${nombre})`] });
+    showBackupToast('✅ Restaurado. La versión anterior quedó en Respaldos.');
+    await respAbrir(R.tabla, R.clave);
+  } catch(e) {
+    setSyncStatus('error');
+    showBackupToast('⚠️ No se pudo restaurar — revisá la conexión y probá de nuevo');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUTOGUARDADO GENERAL — todas las pantallas
+// Cada 1,5 s mira la pantalla abierta: si lo que hay en pantalla cambió respecto de lo guardado
+// y dejó de cambiar, lo guarda solo con el mismo guardado protegido del botón (fusión con lo de
+// otros supervisores, nunca pisa ni borra lo ajeno). El botón 💾 Guardar sigue funcionando igual.
+// Monitoreos y Rotación tienen su propio guardado automático (por celda / por supervisor).
+// ═══════════════════════════════════════════════════════════════
+const AUTO_SECCIONES = {
+  anual:          { collect: () => daCollect(),  save: () => daSave(true) },
+  sabados:        { collect: () => sabCollect(), save: () => sabSave(true) },
+  horarios:       { collect: () => (phDirty ? phCollect() : null), save: () => phSave('auto') },
+  colaboradores:  { collect: () => colabCollect(), save: () => colabSave(true) },
+  equipos:        { collect: () => ({key:'equipos_'+eqYear, data: eqGetYearData(eqYear)}), save: () => eqSave(true) },
+  licencias:      { collect: () => ({key:'licencias_'+licYear, data: licGetYearData(licYear)}), save: () => licSave(true) },
+  dayoff:         { collect: () => ({key:'dayoff_'+doffYear, data: doffGetYearData(doffYear)}), save: () => doffSave(true) },
+  salientes:      { collect: () => ({key:'salientes_'+salYear, data: salGetYearData(salYear)}), save: () => salSave(true) },
+  capacitaciones: { collect: () => ({key:'capacitaciones_'+capYear, data: capGetYearData(capYear)}), save: () => capSave(true) },
+  boxes:          { collect: () => { const k = boxCurrentMonth(); return {key:'distribucion_box_'+k, data: boxGetMonthData(k)}; }, save: () => boxSaveClick(true) },
+};
+const autoBase = {};       // key → cómo estaba (canon) la última vez que coincidía con lo guardado
+const autoUltimo = {};     // key → canon del ciclo anterior (para esperar a que deje de cambiar)
+const autoReintento = {};  // key → no reintentar antes de este momento (si falló la conexión)
+const autoFrenadoKey = {}; // key → canon frenado por el control anti-borrado
+let autoOcupado = false;
+function autoCanonServidor(key) {
+  const r = serverSnapshot[key];
+  if (typeof r !== 'string') return null;
+  try { return jCanon(JSON.parse(r)); } catch(e) { return null; }
+}
+function autoFrenado(key) {
+  if (autoFrenadoKey[key] === '__avisado__') return;
+  autoFrenadoKey[key] = '__avisado__';
+  showBackupToast('⚠️ No se guardó solo: lo de esta pantalla tiene mucha menos información que lo guardado. Recargá (F5); si borraste a propósito, usá 💾 Guardar.');
+}
+function autoMarcarGuardado() {
+  const txt = document.getElementById('sync-text');
+  if (txt) txt.textContent = 'Guardado ' + new Date().toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit'});
+}
+function autoLinea(scr) {
+  const sec = AUTO_SECCIONES[scr];
+  if (!sec || !dataLoaded) return null;
+  let c = null;
+  try { c = sec.collect(); } catch(e) { return null; }
+  if (!c || !c.key || c.data == null) return null;
+  return { sec, key: c.key, canon: jCanon(c.data) };
+}
+function autoBaseline(scr) {
+  const l = autoLinea(scr || currentScreen);
+  if (l && autoBase[l.key] === undefined) { autoBase[l.key] = l.canon; autoUltimo[l.key] = l.canon; }
+}
+async function autoTick(forzar, scr) {
+  if (autoOcupado) return;
+  scr = scr || currentScreen;
+  const l = autoLinea(scr);
+  if (!l) return;
+  const { sec, key, canon } = l;
+  const srv = autoCanonServidor(key);
+  if (autoBase[key] === undefined) {
+    // La Planilla de Horarios solo se arma cuando ya se editó: su base es lo guardado en el servidor.
+    if (scr === 'horarios' && srv != null) autoBase[key] = srv;
+    else { autoBase[key] = canon; autoUltimo[key] = canon; return; } // recién se ve: es la base
+  }
+  if (canon === autoBase[key] || canon === srv) { autoUltimo[key] = canon; if (canon === srv) autoBase[key] = canon; return; }
+  if (!forzar && autoUltimo[key] !== canon) { autoUltimo[key] = canon; return; }  // todavía se está editando
+  const rt = autoReintento[key];
+  if (!forzar && rt && rt.canon === canon && Date.now() < rt.hasta) return; // mismo contenido que falló hace poco: espera
+  autoOcupado = true;
+  try {
+    const ok = await sec.save();
+    if (ok) {
+      delete autoReintento[key]; delete autoFrenadoKey[key];
+      const l2 = autoLinea(scr);
+      autoBase[key] = (l2 && l2.key === key) ? l2.canon : canon;
+      autoUltimo[key] = autoBase[key];
+      autoMarcarGuardado();
+    } else {
+      autoReintento[key] = { canon, hasta: Date.now() + 15000 }; // reintenta solo en 15 s (sin llenar de avisos)
+    }
+  } catch(e) {
+    autoReintento[key] = { canon, hasta: Date.now() + 15000 };
+  } finally { autoOcupado = false; }
+}
+setInterval(() => { autoTick(false); }, 1500);
+document.addEventListener('visibilitychange', () => { if (document.hidden) autoTick(true); });
+window.addEventListener('pagehide', () => autoTick(true));
+
 window.addEventListener('beforeunload', e => {
   // También avisa si quedaron monitoreos pendientes, aunque otra pantalla haya guardado lo suyo.
   if (unsavedChanges || (typeof monDirtyKeys !== 'undefined' && monDirtyKeys.size)) { e.preventDefault(); e.returnValue = ''; }
