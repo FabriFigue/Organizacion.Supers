@@ -3145,6 +3145,8 @@ function monSetModo(sup, aux, modo) {
   monRender();
 }
 
+// Nombre normalizado para comparar auxiliares: sin tildes, sin espacios ni signos, en minúscula.
+function monNormName(n) { return String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
 function monInitials(name) {
   const parts = (name || '').trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return '??';
@@ -3726,7 +3728,31 @@ function monRender() {
   const fijoLc = new Set(teamFijo.map(n => n.toLowerCase()));
   const cob = monCanonCob(supRaw[MON_COB_KEY]).filter(c => !fijoLc.has(c.nombre.toLowerCase()));
   const cobDe = {}; cob.forEach(c => { cobDe[c.nombre] = c.de; });
-  const team = [...teamFijo, ...cob.map(c => c.nombre)];
+  // Los monitoreos se guardan con el nombre tal cual estaba escrito ese día. Si después el nombre
+  // del equipo cambia (tilde, espacio: "Sebastian Benitez" → "Sebastián Benítez") o el auxiliar
+  // sale del equipo, los monitoreos NO se borran, pero antes quedaban ocultos. Ahora:
+  //  1) se empareja el nombre del equipo con el guardado ignorando tildes/espacios/mayúsculas;
+  //  2) todo auxiliar con monitoreos guardados esa semana se muestra igual, aunque ya no esté en el equipo.
+  const dataKeys = Object.keys(supRaw).filter(k => !monIsReserved(k));
+  const conDatos = k => monAuxSummary(k, supRaw[k]).n > 0;
+  const porNorm = {};
+  dataKeys.forEach(k => { const nk = monNormName(k); if (!porNorm[nk] || conDatos(k)) porNorm[nk] = k; });
+  const vistos = new Set();
+  const team = [];
+  [...teamFijo, ...cob.map(c => c.nombre)].forEach(n => {
+    const nk = monNormName(n);
+    if (vistos.has(nk)) return;
+    vistos.add(nk);
+    const real = porNorm[nk] || n;
+    if (real !== n && cobDe[n] !== undefined) cobDe[real] = cobDe[n];
+    team.push(real);
+  });
+  const fueraEquipo = new Set();
+  dataKeys.forEach(k => {
+    const nk = monNormName(k);
+    if (vistos.has(nk) || !conDatos(k)) return;
+    vistos.add(nk); team.push(k); fueraEquipo.add(k);
+  });
   monFillSugerencias(wYear, sup, team);
 
   if (!team.length) {
@@ -3745,7 +3771,8 @@ function monRender() {
   let conMon = 0, pend = 0;
   const rows = team.map(aux => {
     const esCob = aux in cobDe;
-    const cobTag = esCob ? `<span class="mon-cob-tag" title="Agregado solo para esta semana">📅 Esta semana${cobDe[aux] ? ' · eq. ' + licEsc(cobDe[aux]) : ''}</span>` : '';
+    const cobTag = esCob ? `<span class="mon-cob-tag" title="Agregado solo para esta semana">📅 Esta semana${cobDe[aux] ? ' · eq. ' + licEsc(cobDe[aux]) : ''}</span>`
+      : fueraEquipo.has(aux) ? `<span class="mon-cob-tag" title="Tiene monitoreos guardados esta semana pero hoy no figura en el Equipo de Entrena2 de este supervisor">📁 No figura en el equipo</span>` : '';
     const sum = monAuxSummary(aux, supRaw[aux]);
     if (sum.n > 0) conMon++;
     if (sum.estado !== 'listo') pend++;
