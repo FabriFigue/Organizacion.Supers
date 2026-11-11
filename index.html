@@ -1559,6 +1559,11 @@ svg.btn-check {
         <svg class="btn-check" viewBox="0 0 24 24" width="16" height="16"><polyline points="20 6 9 17 4 12"></polyline></svg>
       </button>
     </div>
+    <div style="margin-top: 14px; text-align: center;">
+      <button type="button" onclick="toggleLoginLiteMode()" style="background: none; border: none; color: #64748b; font-size: 11.5px; font-weight: 600; cursor: pointer; font-family: inherit; transition: color 0.15s;">
+        ⚡ <span id="login-lite-txt">Entrar en Modo Lite (Más rápido)</span>
+      </button>
+    </div>
     <p id="e"></p>
   </div>
 </div>
@@ -1627,6 +1632,16 @@ async function login() {
     document.getElementById('p').value = '';
     document.getElementById('p').focus();
   }
+}
+
+function toggleLoginLiteMode() {
+  document.body.classList.toggle('lite-mode');
+  const isLite = document.body.classList.contains('lite-mode');
+  localStorage.setItem('js_lite_mode', isLite ? '1' : '0');
+  const txt = document.getElementById('login-lite-txt');
+  if (txt) txt.textContent = isLite ? '✓ Modo Lite activado para este acceso' : 'Entrar en Modo Lite (Más rápido)';
+  const lbl = document.getElementById('lite-lbl');
+  if (lbl) lbl.textContent = isLite ? 'Modo Lite (Activo)' : 'Modo Lite (Rápido)';
 }
 
 function logout() { location.reload(); }
@@ -10660,6 +10675,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.add('lite-mode');
     const lbl = document.getElementById('lite-lbl');
     if (lbl) lbl.textContent = 'Modo Lite (Activo)';
+    const ltxt = document.getElementById('login-lite-txt');
+    if (ltxt) ltxt.textContent = '✓ Modo Lite activado para este acceso';
   }
 });
 </script>
