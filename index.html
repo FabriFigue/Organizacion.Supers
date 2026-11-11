@@ -1334,8 +1334,9 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 <body>
 
 <style>
-/* ── FONDOS Y TARJETAS ── */
-#loginOverlay{position:fixed;inset:0;
+/* ── FONDOS Y TARJETAS CON GLASSMORPHISM ── */
+#loginOverlay {
+  position: fixed; inset: 0;
   background:
     radial-gradient(circle at center, rgba(91, 155, 213, 0.65) 0%, transparent 55%),
     radial-gradient(circle at center, rgba(0, 205, 148, 0.55) 0%, transparent 55%),
@@ -1344,15 +1345,11 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
     linear-gradient(160deg, #1a2340 0%, #232f57 100%);
   background-size: 200% 200%, 200% 200%, 200% 200%, 200% 200%, 100% 100%;
   animation: meshFluid 24s ease-in-out infinite;
-  display:flex;align-items:center;justify-content:center;z-index:99999;font-family:'Inter','Segoe UI',sans-serif;padding:20px;}
-#loginBox{background:#fff;padding:32px 28px;border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.3);width:100%;max-width:320px;text-align:center;}
-#loginBox h2{font-size:16px;font-weight:700;color:#1e293b;margin-bottom:4px;}
-#loginBox .lb-sub{font-size:11.5px;color:#64748b;margin-bottom:18px;line-height:1.4;}
-#loginBox input{width:100%;padding:10px 12px;margin:6px 0;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:inherit;outline:none;transition:.15s;}
-#loginBox input:focus{border-color:var(--impulsa,#5b9bd5);box-shadow:0 0 0 3px rgba(91,155,213,.12);}
-#loginBox #e{color:#e74c3c;font-size:11px;margin-top:8px;min-height:14px;}
+  display: flex; align-items: center; justify-content: center;
+  z-index: 99999; font-family: 'Inter', 'Segoe UI', sans-serif; padding: 20px;
+  transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.5s;
+}
 
-/* ── ANIMACIÓN DEL FONDO ── */
 @keyframes meshFluid {
   0%   { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
   25%  { background-position: 100% 0%, 100% 100%, 0% 100%, 0% 0%, 0 0; }
@@ -1361,59 +1358,237 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   100% { background-position: 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0 0; }
 }
 
-/* ── BOTÓN SNAKE (ESTILO ADMINISTRADOR EXACTO) ── */
+#loginBox {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  padding: 34px 28px 30px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 25px 60px rgba(15, 21, 43, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.3) inset;
+  width: 100%; max-width: 330px; text-align: center;
+  position: relative;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+#loginBox.shake {
+  animation: shakeBox 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes shakeBox {
+  10%, 90% { transform: translate3d(-2px, 0, 0); }
+  20%, 80% { transform: translate3d(4px, 0, 0); }
+  30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+  40%, 60% { transform: translate3d(6px, 0, 0); }
+}
+
+#loginBox h2 { font-size: 16.5px; font-weight: 700; color: #1e293b; margin-bottom: 3px; }
+#loginBox .lb-sub { font-size: 11.5px; color: #64748b; margin-bottom: 18px; line-height: 1.4; }
+
+.input-group {
+  position: relative; width: 100%; margin: 7px 0;
+}
+
+#loginBox input {
+  width: 100%; padding: 11px 14px;
+  border: 1.5px solid rgba(226, 232, 240, 0.9);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 12px; font-size: 13px; font-family: inherit;
+  outline: none; transition: border-color .2s, box-shadow .2s, background .2s;
+  color: #1e293b;
+}
+
+#loginBox input:focus {
+  border-color: #5b9bd5;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(91, 155, 213, 0.18);
+}
+
+.pwd-toggle-btn {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; color: #94a3b8;
+  padding: 4px; display: flex; align-items: center; justify-content: center;
+  transition: color 0.15s ease;
+}
+.pwd-toggle-btn:hover { color: #5b9bd5; }
+.pwd-toggle-btn svg { width: 17px; height: 17px; }
+
+.caps-warning {
+  display: none; align-items: center; justify-content: center; gap: 5px;
+  font-size: 11px; font-weight: 600; color: #b45309; background: #fef3c7;
+  border: 1px solid #fde68a; border-radius: 8px; padding: 5px 8px;
+  margin-top: 4px; animation: fadeIn .2s ease;
+}
+.caps-warning.show { display: flex; }
+.caps-warning svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+#loginBox #e {
+  color: #e74c3c; font-size: 11.5px; font-weight: 600;
+  margin-top: 10px; min-height: 16px;
+}
+
+/* ── BOTÓN SNAKE CON SPINNER Y CHECK ── */
 @property --angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
 
 #loginBox .btn-snake-container {
-  margin-top: 14px; position: relative; width: 100%; height: 48px; border-radius: 24px; 
+  margin-top: 16px; position: relative; width: 100%; height: 48px; border-radius: 24px;
   background: conic-gradient(from var(--angle), transparent 10%, #00cd94 40%, #5b9bd5 60%, #b688ea 90%, transparent 100%), #0f152b;
-  padding: 2px; animation: rotateBorder 3s linear infinite; box-shadow: 0 4px 15px rgba(26, 35, 64, 0.2);
+  padding: 2px; animation: rotateBorder 3s linear infinite;
+  box-shadow: 0 6px 20px rgba(26, 35, 64, 0.28);
+  transition: all 0.3s ease;
 }
 
 @keyframes rotateBorder { 0% { --angle: 0deg; } 100% { --angle: 360deg; } }
 
 #loginBox button.btn-snake {
-  width: 100%; height: 100%; background: #0f152b; border-radius: 22px; border: none; color: #a3b8d6; 
-  font-size: 14.5px; font-weight: 500; letter-spacing: 0.3px; cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 8px; transition: color .2s ease, background .2s ease;
+  width: 100%; height: 100%; background: #0f152b; border-radius: 22px; border: none;
+  color: #a3b8d6; font-size: 14.5px; font-weight: 600; letter-spacing: 0.3px;
+  cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center;
+  gap: 8px; transition: color .2s ease, background .2s ease; position: relative;
 }
 
-#loginBox button.btn-snake:hover { background: #151d38; color: #fff; }
-#loginBox button.btn-snake svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#loginBox button.btn-snake:hover:not(:disabled) { background: #151d38; color: #fff; }
+
+.btn-spinner {
+  display: none; width: 18px; height: 18px; border: 2.2px solid rgba(255,255,255,0.25);
+  border-top-color: #00cd94; border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#loginBox .btn-snake-container.loading button.btn-snake { cursor: default; }
+#loginBox .btn-snake-container.loading .btn-text,
+#loginBox .btn-snake-container.loading .btn-icon { display: none; }
+#loginBox .btn-snake-container.loading .btn-spinner { display: block; }
+
+#loginBox .btn-snake-container.success {
+  background: #00cd94; box-shadow: 0 0 25px rgba(0, 205, 148, 0.55);
+}
+#loginBox .btn-snake-container.success button.btn-snake {
+  background: #00966d; color: #ffffff;
+}
+#loginBox .btn-snake-container.success .btn-text,
+#loginBox .btn-snake-container.success .btn-spinner,
+#loginBox .btn-snake-container.success .btn-icon { display: none; }
+#loginBox .btn-snake-container.success .btn-check { display: block; }
+
+.btn-check {
+  display: none; width: 20px; height: 20px; stroke: #fff; stroke-width: 2.5;
+  stroke-linecap: round; stroke-linejoin: round; fill: none;
+  animation: checkPop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+@keyframes checkPop { 0% { transform: scale(0.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 
 <div id="loginOverlay">
   <div id="loginBox">
-<div style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 0 auto 16px;">
-  <img src="https://jerarquicos.com/wp-content/uploads/2024/01/jerarquicos-logo.svg" 
-       alt="Jerárquicos Salud" 
-       style="width: 100%; max-width: 210px; height: auto; max-height: 40px; object-fit: contain; display: block; filter: none;">
-</div>    
+    <div style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 0 auto 16px;">
+      <img src="logo.svg" alt="Jerárquicos Salud" style="width: 100%; max-width: 210px; height: auto; max-height: 40px; object-fit: contain; display: block; filter: none;">
+    </div>
+    <h2>Acceso Supervisores</h2>
     <div class="lb-sub">Organización Supers</div>
-    <input id="u" placeholder="Usuario" autocomplete="username">
-    <input id="p" type="password" placeholder="Contraseña" autocomplete="current-password">
-    <div class="btn-snake-container">
-      <button class="btn-snake" onclick="login()">
-        <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-        Ingresar
+
+    <div class="input-group">
+      <input id="u" placeholder="Usuario" autocomplete="username" onkeydown="if(event.key==='Enter') document.getElementById('p').focus()">
+    </div>
+
+    <div class="input-group">
+      <input id="p" type="password" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter') login()">
+      <button type="button" class="pwd-toggle-btn" onclick="togglePasswordVisibility()" title="Mostrar/ocultar contraseña" tabindex="-1">
+        <svg id="eyeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
       </button>
     </div>
+
+    <div id="capsWarn" class="caps-warning">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 7h-4v7h-6v-7h-4l7-7z"></path><path d="M6 21h12"></path></svg>
+      Bloq Mayús activado
+    </div>
+
+    <div class="btn-snake-container" id="loginBtnContainer">
+      <button class="btn-snake" id="loginBtn" onclick="login()">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        <span class="btn-text">Ingresar</span>
+        <div class="btn-spinner"></div>
+        <svg class="btn-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      </button>
+    </div>
+
     <p id="e"></p>
   </div>
 </div>
-<script>
-const USER='supervisores',PASS='js2026';
-function show(){
-  document.getElementById('loginOverlay').style.display='none';
-  const lb=document.getElementById('logout-btn');if(lb)lb.style.display='inline-flex';
-  showLogin(); // encadenado: después del acceso, siempre pregunta "¿Quién sos?"
-}
-// Ya NO se recuerda el acceso entre visitas: usuario y contraseña se piden siempre,
-// antes de entrar a la portada, encadenado con "¿Quién sos?".
-function login(){if(u.value===USER&&p.value===PASS){show();}else e.textContent='Usuario o contraseña incorrectos';}
-function logout(){location.reload();}
-document.getElementById('p').addEventListener('keydown', evt => { if(evt.key==='Enter') login(); });
-</script>
 
+<script>
+const USER='supervisores', PASS='js2026';
+
+function togglePasswordVisibility() {
+  const pInput = document.getElementById('p');
+  const eyeIcon = document.getElementById('eyeIcon');
+  if (pInput.type === 'password') {
+    pInput.type = 'text';
+    eyeIcon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>';
+  } else {
+    pInput.type = 'password';
+    eyeIcon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>';
+  }
+}
+
+document.getElementById('p').addEventListener('keyup', function(evt) {
+  const capsWarn = document.getElementById('capsWarn');
+  if (evt.getModifierState && evt.getModifierState('CapsLock')) {
+    capsWarn.classList.add('show');
+  } else {
+    capsWarn.classList.remove('show');
+  }
+});
+
+function show() {
+  const overlay = document.getElementById('loginOverlay');
+  overlay.style.opacity = '0';
+  overlay.style.pointerEvents = 'none';
+  setTimeout(() => {
+    overlay.style.display = 'none';
+    const lb = document.getElementById('logout-btn');
+    if (lb) lb.style.display = 'inline-flex';
+    showLogin();
+  }, 450);
+}
+
+async function login() {
+  const uVal = document.getElementById('u').value.trim();
+  const pVal = document.getElementById('p').value.trim();
+  const errEl = document.getElementById('e');
+  const box = document.getElementById('loginBox');
+  const container = document.getElementById('loginBtnContainer');
+  const btn = document.getElementById('loginBtn');
+
+  errEl.textContent = '';
+  box.classList.remove('shake');
+  container.classList.add('loading');
+  btn.disabled = true;
+
+  await new Promise(r => setTimeout(r, 400));
+
+  if (uVal === USER && pVal === PASS) {
+    container.classList.remove('loading');
+    container.classList.add('success');
+    await new Promise(r => setTimeout(r, 500));
+    show();
+  } else {
+    container.classList.remove('loading');
+    btn.disabled = false;
+    errEl.textContent = 'Usuario o contraseña incorrectos';
+    box.classList.add('shake');
+    document.getElementById('p').value = '';
+    document.getElementById('p').focus();
+  }
+}
+
+function logout() { location.reload(); }
+</script>
 
 <!-- LANDING SCREEN -->
 <div class="landing-page" id="landing">
