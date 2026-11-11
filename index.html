@@ -1330,6 +1330,36 @@ button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+
+<style>
+/* ── MODO LITE (Optimizado para Home Office / VPN) ── */
+body.lite-mode, body.lite-mode * {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+body.lite-mode {
+  background: #141824 !important;
+}
+body.lite-mode .sidebar {
+  background: #1a2340 !important;
+}
+body.lite-mode .landing-page {
+  background: #1a2340 !important;
+}
+body.lite-mode #loginOverlay {
+  background: #1a2340 !important;
+}
+body.lite-mode .card, body.lite-mode .modal-box, body.lite-mode .stat-card {
+  background: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+}
+[data-theme="dark"] body.lite-mode .card, [data-theme="dark"] body.lite-mode .modal-box {
+  background: #1e2433 !important;
+}
+</style>
 </head>
 <body>
 
@@ -1799,6 +1829,7 @@ function logout() { location.reload(); }
     <button onclick="toggleDark()" id="dark-btn" class="nav-item" style="font-size:11px;padding:8px 12px;">
       <span class="ni-icon">🌙</span> <span id="dark-lbl">Modo oscuro</span>
     </button>
+    <button onclick="toggleLiteMode()" id="lite-btn" class="nav-item" style="font-size:11px;padding:8px 12px;color:#6ee7b7;margin-top:4px;"><span class="ni-icon">⚡</span> <span id="lite-lbl">Modo Lite (Rápido)</span></button>
   </div>
   <div class="sb-sync">
     <div class="sync-dot" id="sync-dot"></div>
@@ -10611,6 +10642,26 @@ function renderLandingBadges() {
     bSal.textContent = n ? `${n} en ${y}` : '';
   }
 }
+</script>
+
+<script>
+function toggleLiteMode() {
+  document.body.classList.toggle('lite-mode');
+  const isLite = document.body.classList.contains('lite-mode');
+  localStorage.setItem('js_lite_mode', isLite ? '1' : '0');
+  const lbl = document.getElementById('lite-lbl');
+  if (lbl) lbl.textContent = isLite ? 'Modo Lite (Activo)' : 'Modo Lite (Rápido)';
+  showBackupToast(isLite ? '⚡ Modo Lite activado: efectos gráficos desactivados para mayor velocidad.' : '✨ Modo Lite desactivado.');
+}
+
+// Al cargar la página, restaurar el modo Lite si estaba activo
+document.addEventListener('DOMContentLoaded', () => {
+  if (localStorage.getItem('js_lite_mode') === '1') {
+    document.body.classList.add('lite-mode');
+    const lbl = document.getElementById('lite-lbl');
+    if (lbl) lbl.textContent = 'Modo Lite (Activo)';
+  }
+});
 </script>
 </body>
 </html>
